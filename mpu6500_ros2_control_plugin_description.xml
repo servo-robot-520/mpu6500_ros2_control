@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<library path="mpu6500_ros2_control">
+  <class
+    name="mpu6500_ros2_control/MPU6500SensorInterface"
+    type="mpu6500_ros2_control::MPU6500SensorInterface"
+    base_class_type="hardware_interface::SensorInterface"
+  >
+    <description>ros2_control SensorInterface for the InvenSense MPU6500 6-axis IMU over Linux IIO</description>
+  </class>
+</library>
