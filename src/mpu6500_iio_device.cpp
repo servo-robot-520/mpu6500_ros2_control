@@ -128,18 +128,33 @@ namespace mpu6500_ros2_control {
         }
 
         /// @brief 写入一个 sysfs 属性文件。
+        ///
+        /// 使用 O_WRONLY 而不是 ofstream：sysfs 属性文件不能通过打开操作创建，
+        /// 缺失时应明确失败，而不是在普通目录里意外生成同名文件。
         Result write_text_file(const std::string& path, const std::string& text) {
             errno = 0;
-            std::ofstream file(path, std::ios::out | std::ios::trunc);
-            if (!file.is_open()) {
-                const int error_number = errno;
-                return Result::failure("无法打开 " + path +
-                                       (error_number != 0 ? ": " + std::string(std::strerror(error_number)) : ""));
+            const int fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
+            if (fd < 0) {
+                return Result::failure("无法打开 " + path + ": " + std::strerror(errno));
             }
-            file << text;
-            file.flush();
-            if (!file.good()) {
-                return Result::failure("写入 " + path + " 失败");
+
+            std::size_t offset = 0;
+            while (offset < text.size()) {
+                const ssize_t written = ::write(fd, text.data() + offset, text.size() - offset);
+                if (written < 0) {
+                    if (errno == EINTR) {
+                        continue;
+                    }
+                    const int error_number = errno;
+                    ::close(fd);
+                    return Result::failure("写入 " + path + " 失败: " +
+                                           std::strerror(error_number));
+                }
+                offset += static_cast<std::size_t>(written);
+            }
+
+            if (::close(fd) != 0) {
+                return Result::failure("关闭 " + path + " 失败: " + std::strerror(errno));
             }
             return Result::success();
         }
