@@ -20,7 +20,8 @@ namespace mpu6500_ros2_control {
 
         constexpr double kPi = 3.14159265358979323846;
 
-        hardware_interface::ComponentInfo make_sensor(const std::string& name) {
+        hardware_interface::ComponentInfo make_sensor(const std::string& name,
+                                                      const bool include_valid = false) {
             hardware_interface::ComponentInfo sensor;
             sensor.name = name;
             for (const char* interface_name :
@@ -31,17 +32,23 @@ namespace mpu6500_ros2_control {
                 interface.name = interface_name;
                 sensor.state_interfaces.push_back(interface);
             }
+            if (include_valid) {
+                hardware_interface::InterfaceInfo interface;
+                interface.name = "orientation_valid";
+                sensor.state_interfaces.push_back(interface);
+            }
             return sensor;
         }
 
         hardware_interface::HardwareInfo make_hardware_info(const std::string& device_path,
-                                                            const std::string& sensor_name = "head_imu") {
+                                                            const std::string& sensor_name = "head_imu",
+                                                            const bool include_valid = false) {
             hardware_interface::HardwareInfo info;
             info.name = sensor_name;
             info.type = "sensor";
             info.hardware_class_type = "mpu6500_ros2_control/MPU6500SensorInterface";
             info.hardware_parameters["iio_device"] = device_path;
-            info.sensors.push_back(make_sensor(sensor_name));
+            info.sensors.push_back(make_sensor(sensor_name, include_valid));
             return info;
         }
 
@@ -290,6 +297,129 @@ namespace mpu6500_ros2_control {
             EXPECT_NEAR(head_states[4].get_value(), 100.0 * FakeMpu6500::kGyroScale, 1e-12);
             EXPECT_NEAR(body_states[4].get_value(), -200.0 * FakeMpu6500::kGyroScale, 1e-12);
             EXPECT_NEAR(head_states[4].get_value(), -0.5 * body_states[4].get_value(), 1e-12);
+        }
+
+
+        TEST_F(SensorInterfaceTest, ExportsOrientationValidWhenDeclared) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+
+            MPU6500SensorInterface hardware;
+            ASSERT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::SUCCESS);
+
+            const auto states = hardware.export_state_interfaces();
+            ASSERT_EQ(states.size(), 11U);
+            EXPECT_EQ(states[10].get_name(), "head_imu/orientation_valid");
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 0.0);
+        }
+
+        TEST_F(SensorInterfaceTest, OrientationValidRequiresConsecutiveGravitySamples) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+            info.hardware_parameters["orientation.valid_samples"] = "5";
+
+            MPU6500SensorInterface hardware;
+            ASSERT_TRUE(init_and_configure(hardware, info));
+            auto states = hardware.export_state_interfaces();
+            ASSERT_EQ(states.size(), 11U);
+
+            for (int sample = 1; sample < 5; ++sample) {
+                ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                          hardware_interface::return_type::OK);
+                EXPECT_DOUBLE_EQ(states[10].get_value(), 0.0) << "sample " << sample;
+            }
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+        }
+
+        TEST_F(SensorInterfaceTest, OrientationValidWaitsForGravityAtStartup) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+            info.hardware_parameters["orientation.valid_samples"] = "5";
+            fake_->set_raw_accel(0, 0, 0);
+
+            MPU6500SensorInterface hardware;
+            ASSERT_TRUE(init_and_configure(hardware, info));
+            auto states = hardware.export_state_interfaces();
+
+            // 首帧加速度不是 1 g：不能初始化姿态，也不能计入收敛样本。
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 0.0);
+
+            fake_->set_raw_accel(0, 0, FakeMpu6500::kGravityRaw);
+            for (int sample = 1; sample < 5; ++sample) {
+                ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                          hardware_interface::return_type::OK);
+                EXPECT_DOUBLE_EQ(states[10].get_value(), 0.0) << "sample " << sample;
+            }
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+        }
+
+        TEST_F(SensorInterfaceTest, OrientationValidSurvivesLinearAccelerationAfterConvergence) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+            info.hardware_parameters["orientation.valid_samples"] = "1";
+
+            MPU6500SensorInterface hardware;
+            ASSERT_TRUE(init_and_configure(hardware, info));
+            auto states = hardware.export_state_interfaces();
+
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+
+            // 2 g 的线性加速度不是重力；已经收敛的姿态仍保持 valid，只跳过本帧校正。
+            fake_->set_raw_accel(0, 2 * FakeMpu6500::kGravityRaw, 0);
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+        }
+
+        TEST_F(SensorInterfaceTest, OrientationValidClearsOnPersistentReadFailure) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+            info.hardware_parameters["orientation.valid_samples"] = "1";
+
+            MPU6500SensorInterface hardware;
+            ASSERT_TRUE(init_and_configure(hardware, info));
+            auto states = hardware.export_state_interfaces();
+
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+
+            fake_->write_file("in_anglvel_x_raw", "");
+            for (int attempt = 1; attempt <= 3; ++attempt) {
+                EXPECT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                          hardware_interface::return_type::OK);
+                EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+            }
+            EXPECT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::ERROR);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 0.0);
+        }
+
+        TEST_F(SensorInterfaceTest, CleanupClearsOrientationValid) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+            info.hardware_parameters["orientation.valid_samples"] = "1";
+
+            MPU6500SensorInterface hardware;
+            ASSERT_TRUE(init_and_configure(hardware, info));
+            auto states = hardware.export_state_interfaces();
+            ASSERT_EQ(hardware.read(rclcpp::Time{}, rclcpp::Duration::from_seconds(0.01)),
+                      hardware_interface::return_type::OK);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 1.0);
+
+            ASSERT_EQ(hardware.on_cleanup(rclcpp_lifecycle::State()),
+                      hardware_interface::CallbackReturn::SUCCESS);
+            EXPECT_DOUBLE_EQ(states[10].get_value(), 0.0);
+        }
+
+        TEST_F(SensorInterfaceTest, RejectsInvalidValidSamples) {
+            auto info = make_hardware_info(fake_->path(), "head_imu", true);
+            info.hardware_parameters["orientation.valid_samples"] = "0";
+
+            MPU6500SensorInterface hardware;
+            EXPECT_EQ(hardware.on_init(info), hardware_interface::CallbackReturn::ERROR);
         }
 
     } // namespace

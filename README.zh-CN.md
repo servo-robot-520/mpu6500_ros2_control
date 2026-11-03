@@ -12,7 +12,8 @@
 ## 特性
 
 - 一个插件实例对应一个 `/dev/iio:deviceN`（或 IIO sysfs 目录）。
-- 导出 10 个状态接口：姿态四元数、角速度、线加速度。
+- 10 个标准状态接口（姿态四元数、角速度、线加速度），外加可选的
+  `orientation_valid` 健康标志。
 - 使用设备的 `scale` 属性把原始值换算为 SI 单位。
 - 支持安装矩阵：可配置车体轴到传感器轴的映射与符号取反。
 - 互补滤波四元数：加速度计约束 roll/pitch，陀螺积分 yaw。MPU6500 没有磁力计，
@@ -121,11 +122,14 @@ ctest --test-dir build-mpu6500 --output-on-failure
     <state_interface name="linear_acceleration.x"/>
     <state_interface name="linear_acceleration.y"/>
     <state_interface name="linear_acceleration.z"/>
+    <!-- 可选：姿态滤波器已收敛且传感器健康时为 1。 -->
+    <state_interface name="orientation_valid"/>
   </sensor>
 </ros2_control>
 ```
 
 只导出 URDF 中声明的接口。`imu_sensor_broadcaster` 需要上面 10 个标准接口；
+`orientation_valid` 是可选的，该广播器不会发布它。
 控制器可以只声明其中一部分（例如只声明 `angular_velocity.*` 和
 `linear_acceleration.*`）。
 
@@ -143,7 +147,7 @@ ctest --test-dir build-mpu6500 --output-on-failure
     <param name="log.log_level">info</param>
   </hardware>
   <sensor name="body_imu">
-    <!-- 同样声明 10 个状态接口 -->
+    <!-- 同样声明完整状态接口；需要时包含 orientation_valid -->
   </sensor>
 </ros2_control>
 ```
@@ -195,6 +199,7 @@ ctest --test-dir build-mpu6500 --output-on-failure
 | `orientation.accel_gain` | `0.05` | 互补滤波比例校正增益（1/s）。 |
 | `orientation.integral_gain` | `0.0` | 陀螺零偏积分增益（1/s²），`0` 关闭。 |
 | `orientation.accel_tolerance` | `0.25` | 加速度模长相对 1 g 的最大允许偏差比例，超出时本帧不做加速度校正。 |
+| `orientation.valid_samples` | `25` | 启动阶段需要连续多少个加速度模长≈1 g 的样本才把 `orientation_valid` 置 1；50 Hz 下约 0.5 s。 |
 
 ### 日志参数
 
@@ -220,10 +225,38 @@ ctest --test-dir build-mpu6500 --output-on-failure
 | `orientation.x/y/z/w` | — | 互补滤波输出，body → world 四元数。 |
 | `angular_velocity.x/y/z` | rad/s | `in_anglvel_*_raw` × scale，车体系。 |
 | `linear_acceleration.x/y/z` | m/s² | `in_accel_*_raw` × scale，车体系。 |
+| `orientation_valid` | 0/1 | 可选健康标志，见下文。 |
 
 坐标约定遵循 ROS REP-103：x 向前、y 向左、z 向上。传感器静止直立时读数为
 `(0, 0, +g)`，导出单位四元数。`orientation` 只由重力和陀螺产生，yaw 会漂移，
 不能作为长期航向参考。
+
+### 姿态有效标志
+
+`orientation_valid` 是**健康/就绪标志**，不是“本帧数据新鲜度”。只有 URDF 中
+声明该接口时才会导出。
+
+| 值 | 含义 |
+|---|---|
+| `0` | 启动阶段、cleanup/reset 后，或持续读取失败。姿态不可信。 |
+| `1` | 滤波器已初始化，且连续观察到 `orientation.valid_samples` 个加速度模长≈1 g 的样本。 |
+
+细节：
+
+- 启动阶段，只有加速度模长在 `orientation.accel_tolerance` 范围内接近 1 g 时，
+  才允许用它初始化姿态。机器人上电时被抬起、放在斜面上或正在运动，都不会把
+  线性加速度误当成重力。
+- 置 1 后，后续的线性加速度只会跳过当帧的加速度校正，不会清零；否则机器人
+  一开始走路就会反复关闭控制器的姿态相关逻辑。
+- `max_read_failures` 以内的瞬时读取失败沿用上一帧，不清除已经置 1 的标志；
+  超过阈值返回 `ERROR` 时才清零。
+- `on_cleanup`、`on_shutdown`、重新 configure 和滤波器 reset 都会清零。
+- **该保证不覆盖 yaw。** MPU6500 没有磁力计，即使 `orientation_valid == 1`，
+  yaw 仍是相对量并且会漂移。
+
+`duck_control` 应 claim `body_imu/orientation_valid`，在它为 0 时保持当前目标，
+不启动策略，跌倒检测也不投票。控制器侧仍可保留 warm-up 计数作为没有该接口时的
+兜底。
 
 ## 安装矩阵
 
@@ -249,6 +282,8 @@ ctest --test-dir build-mpu6500 --output-on-failure
 - 首次读取失败（还没有有效样本）：返回 `ERROR`。
 - 瞬时失败：沿用上一帧并返回 `OK`，最多允许 `max_read_failures` 次连续失败；
   下一次失败返回 `ERROR`。读取成功后计数清零。
+- `orientation_valid`：初始为 0，只有满足上面的收敛条件后才置 1；持续失败、
+  cleanup/重新 configure 和 reset 都会清零。
 
 本插件不导出命令接口，是只读传感器组件。
 
@@ -308,6 +343,8 @@ colcon test --packages-select mpu6500_ros2_control --event-handlers console_dire
 - scale 换算、轴映射/符号、设备名校验、缺失属性、损坏数据、
   `sampling_frequency` 写入与失败、关闭重开；
 - 滤波初始化、roll 收敛、纯陀螺积分、非法 `dt`；
+- `orientation_valid` 的启动收敛、非 1 g 启动样本拒绝、运动加速度下保持、
+  持续失败/cleanup 清零；
 - `SensorInterface` 生命周期、接口导出、瞬时失败处理、清理后重配，
   以及两个独立组件（头部 + 身体）同时读取；
 - 从构建树加载 pluginlib 插件。

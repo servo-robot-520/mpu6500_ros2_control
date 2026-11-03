@@ -3,9 +3,10 @@
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-#include "common_cpp/logging/log_interface/log_macro.hpp"
 #include "common_cpp/logging/rclcpp_log_handler.hpp"
+#include "common_cpp/logging/log_interface/log_macro.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 #include <string>
@@ -14,6 +15,24 @@
 
 namespace mpu6500_ros2_control {
     namespace {
+
+        /// @brief 标准重力加速度，m/s²；用于判断加速度是否主要反映重力。
+        constexpr double kGravity = 9.80665;
+
+        /// @brief 判断加速度模长是否在 1 g 附近，可作为重力方向使用。
+        ///
+        /// 该判定与 OrientationFilter 内部的加速度校正条件一致；启动阶段必须
+        /// 通过它才允许用加速度初始化姿态，避免机器人被抬起/加速时把运动
+        /// 加速度误认为重力。
+        bool acceleration_matches_gravity(const std::array<double, 3>& acceleration,
+                                          const double tolerance) {
+            const double norm = std::sqrt(acceleration[0] * acceleration[0] +
+                                          acceleration[1] * acceleration[1] +
+                                          acceleration[2] * acceleration[2]);
+            const double relative_tolerance = std::max(0.0, tolerance);
+            return std::isfinite(norm) && norm > 1e-6 &&
+                std::abs(norm - kGravity) <= kGravity * relative_tolerance;
+        }
 
         /// @brief 去掉首尾空白字符。
         std::string trim(const std::string& text) {
@@ -36,7 +55,7 @@ namespace mpu6500_ros2_control {
                 }
                 if (value < min || value > max) {
                     return Result::failure(label + ": " + text + " is outside [" + std::to_string(min) + ", " +
-                                           std::to_string(max) + "]");
+                        std::to_string(max) + "]");
                 }
                 *out = static_cast<int>(value);
                 return Result::success();
@@ -57,7 +76,7 @@ namespace mpu6500_ros2_control {
                 }
                 if (!std::isfinite(value) || value < min || value > max) {
                     return Result::failure(label + ": " + text + " is outside [" + std::to_string(min) + ", " +
-                                           std::to_string(max) + "]");
+                        std::to_string(max) + "]");
                 }
                 *out = value;
                 return Result::success();
@@ -87,15 +106,16 @@ namespace mpu6500_ros2_control {
             size_t start = 0;
             while (true) {
                 const size_t comma = text.find(',', start);
-                tokens.push_back(trim(text.substr(start, comma == std::string::npos ? std::string::npos
-                                                                                    : comma - start)));
+                tokens.push_back(trim(text.substr(start, comma == std::string::npos
+                                                  ? std::string::npos
+                                                  : comma - start)));
                 if (comma == std::string::npos) {
                     break;
                 }
                 start = comma + 1;
             }
             if (tokens.size() != 3) {
-                return Result::failure("axis_map 必须包含 3 个用逗号分隔的轴，例如 'x,y,z'");
+                return Result::failure("axis_map must contain three axes separated by commas, for example 'x,y,z'");
             }
 
             std::array<bool, 3> used{};
@@ -108,8 +128,8 @@ namespace mpu6500_ros2_control {
                     ++position;
                 }
                 if (position + 1 != token.size()) {
-                    return Result::failure("axis_map 第 " + std::to_string(axis + 1) +
-                                           " 项无效: '" + token + "'");
+                    return Result::failure("axis_map item " + std::to_string(axis + 1) +
+                                           " is invalid: '" + token + "'");
                 }
                 int source_axis = -1;
                 switch (token[position]) {
@@ -123,11 +143,11 @@ namespace mpu6500_ros2_control {
                     source_axis = 2;
                     break;
                 default:
-                    return Result::failure("axis_map 第 " + std::to_string(axis + 1) +
-                                           " 项必须是 x/y/z: '" + token + "'");
+                    return Result::failure("axis_map item " + std::to_string(axis + 1) +
+                                           " must be x/y/z: '" + token + "'");
                 }
                 if (used[static_cast<std::size_t>(source_axis)]) {
-                    return Result::failure("axis_map 不能重复使用同一个传感器轴");
+                    return Result::failure("The axis_map cannot reuse the same sensor axis.");
                 }
                 used[static_cast<std::size_t>(source_axis)] = true;
                 (*axis_map)[static_cast<std::size_t>(axis)] = source_axis;
@@ -149,14 +169,14 @@ namespace mpu6500_ros2_control {
                 "linear_acceleration.x",
                 "linear_acceleration.y",
                 "linear_acceleration.z",
+                "orientation_valid",
             };
             return kSupported;
         }
 
     } // namespace
 
-    hardware_interface::CallbackReturn MPU6500SensorInterface::on_init(
-        const hardware_interface::HardwareInfo& info) {
+    hardware_interface::CallbackReturn MPU6500SensorInterface::on_init(const hardware_interface::HardwareInfo& info) {
         if (hardware_interface::SensorInterface::on_init(info) !=
             hardware_interface::CallbackReturn::SUCCESS) {
             return hardware_interface::CallbackReturn::ERROR;
@@ -186,22 +206,22 @@ namespace mpu6500_ros2_control {
         reset_runtime_state();
 
         if (info_.sensors.empty()) {
-            return fail("必须在 URDF 的 <ros2_control type=\"sensor\"> 中声明一个 <sensor>");
+            return fail("A <sensor> must be declared within the <ros2_control type=\"sensor\"> of the URDF.");
         }
         if (info_.sensors.size() > 1) {
-            return fail("一个 MPU6500SensorInterface 实例只能对应一个 <sensor>；"
-                        "双 IMU 请声明两个独立的 <ros2_control type=\"sensor\"> 组件");
+            return fail("One MPU6500SensorInterface instance can only correspond to one <sensor>; "
+                        "for dual IMUs, declare two independent <ros2_control type=\"sensor\"> components.");
         }
 
         const auto& sensor = info_.sensors.front();
         if (sensor.state_interfaces.empty()) {
-            return fail("sensor '" + sensor.name + "' 没有声明任何状态接口");
+            return fail("The sensor '" + sensor.name + "' has no declared state interfaces.");
         }
         for (const auto& state_interface : sensor.state_interfaces) {
             if (!supported_state_interfaces().contains(state_interface.name)) {
-                return fail("sensor '" + sensor.name + "': 不支持的状态接口 '" + state_interface.name +
-                            "'（支持 orientation.x/y/z/w、angular_velocity.x/y/z、"
-                            "linear_acceleration.x/y/z）");
+                return fail("sensor '" + sensor.name + "': unsupported state interface '" + state_interface.name +
+                            "' (supported: orientation.x/y/z/w, angular_velocity.x/y/z, "
+                            "linear_acceleration.x/y/z, orientation_valid)");
             }
         }
 
@@ -211,10 +231,10 @@ namespace mpu6500_ros2_control {
         }
 
         LOG_INFO("configured sensor='{}': iio_device={} expected_name='{}' verify_name={} "
-                 "max_read_failures={} accel_gain={} integral_gain={}",
+                 "max_read_failures={} valid_samples={} accel_gain={} integral_gain={}",
                  sensor.name, options_.device.device_path, options_.device.expected_name,
-                 options_.device.verify_name, options_.max_read_failures, options_.filter.accel_gain,
-                 options_.filter.integral_gain);
+                 options_.device.verify_name, options_.max_read_failures, options_.valid_samples,
+                 options_.filter.accel_gain, options_.filter.integral_gain);
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
@@ -229,7 +249,7 @@ namespace mpu6500_ros2_control {
 
         const auto device = parameters.find("iio_device");
         if (device == parameters.end() || device->second.empty()) {
-            return fail("缺少必需的硬件参数 iio_device（例如 /dev/iio:device0）");
+            return fail("The required hardware parameter iio_device is missing (example: /dev/iio:device0)");
         }
         options_.device.device_path = device->second;
 
@@ -317,6 +337,14 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        if (const auto it = parameters.find("orientation.valid_samples"); it != parameters.end()) {
+            if (const auto result = parse_integer_parameter("orientation.valid_samples", it->second, 1, 10000,
+                                                            &options_.valid_samples);
+                !result) {
+                return fail(result.error());
+            }
+        }
+
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
@@ -324,6 +352,7 @@ namespace mpu6500_ros2_control {
         state_ = State{};
         filter_ = OrientationFilter{};
         consecutive_failures_ = 0;
+        consecutive_valid_samples_ = 0;
         has_sample_ = false;
         last_read_time_ns_ = 0;
     }
@@ -355,26 +384,22 @@ namespace mpu6500_ros2_control {
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn MPU6500SensorInterface::on_cleanup(
-        const rclcpp_lifecycle::State& /* previous_state */) {
+    hardware_interface::CallbackReturn MPU6500SensorInterface::on_cleanup(const rclcpp_lifecycle::State& /* previous_state */) {
         device_.close();
         reset_runtime_state();
-        LOG_INFO("IIO 设备已关闭");
+        LOG_INFO("IIO device closed");
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn MPU6500SensorInterface::on_shutdown(
-        const rclcpp_lifecycle::State& previous_state) {
+    hardware_interface::CallbackReturn MPU6500SensorInterface::on_shutdown(const rclcpp_lifecycle::State& previous_state) {
         return on_cleanup(previous_state);
     }
 
-    hardware_interface::CallbackReturn MPU6500SensorInterface::on_activate(
-        const rclcpp_lifecycle::State& /* previous_state */) {
+    hardware_interface::CallbackReturn MPU6500SensorInterface::on_activate(const rclcpp_lifecycle::State& /* previous_state */) {
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
-    hardware_interface::CallbackReturn MPU6500SensorInterface::on_deactivate(
-        const rclcpp_lifecycle::State& /* previous_state */) {
+    hardware_interface::CallbackReturn MPU6500SensorInterface::on_deactivate(const rclcpp_lifecycle::State& /* previous_state */) {
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
@@ -409,6 +434,9 @@ namespace mpu6500_ros2_control {
         if (name == "linear_acceleration.z") {
             return &state_.linear_acceleration[2];
         }
+        if (name == "orientation_valid") {
+            return &state_.orientation_valid;
+        }
         return nullptr;
     }
 
@@ -429,12 +457,10 @@ namespace mpu6500_ros2_control {
         return interfaces;
     }
 
-    double MPU6500SensorInterface::sample_period(const rclcpp::Time& time,
-                                                 const rclcpp::Duration& period) {
-        const double period_seconds = period.seconds();
-        if (std::isfinite(period_seconds) && period_seconds > 0.0 && period_seconds <= 1.0) {
-            const int64_t now = time.nanoseconds();
-            if (now > 0) {
+    double MPU6500SensorInterface::sample_period(const rclcpp::Time& time, const rclcpp::Duration& period) {
+        if (const double period_seconds = period.seconds();
+            std::isfinite(period_seconds) && period_seconds > 0.0 && period_seconds <= 1.0) {
+            if (const int64_t now = time.nanoseconds(); now > 0) {
                 last_read_time_ns_ = now;
             }
             return period_seconds;
@@ -455,10 +481,9 @@ namespace mpu6500_ros2_control {
         return 0.02;
     }
 
-    hardware_interface::return_type MPU6500SensorInterface::read(
-        const rclcpp::Time& time, const rclcpp::Duration& period) {
+    hardware_interface::return_type MPU6500SensorInterface::read(const rclcpp::Time& time, const rclcpp::Duration& period) {
         if (!device_.is_open()) {
-            LOG_ERROR_WITH_FUNC(__func__, "read() 在 IIO 设备未打开时被调用");
+            LOG_ERROR_WITH_FUNC(__func__, "read() is called when the IIO device is not open.");
             return hardware_interface::return_type::ERROR;
         }
 
@@ -467,22 +492,71 @@ namespace mpu6500_ros2_control {
             ++consecutive_failures_;
             // 首帧失败时没有可用的旧样本，直接报错；之后允许短暂沿用上一帧。
             if (!has_sample_ || consecutive_failures_ > options_.max_read_failures) {
-                LOG_ERROR_WITH_FUNC(__func__, "IMU 读取失败（连续 {} 次）: {}", consecutive_failures_,
+                // 持续失败后姿态不再可信；控制器应立即停止依赖姿态的动作。
+                state_.orientation_valid = 0.0;
+                consecutive_valid_samples_ = 0;
+                LOG_ERROR_WITH_FUNC(__func__, "IMU read failed ({} times consecutively): {}", consecutive_failures_,
                                     result.error());
                 return hardware_interface::return_type::ERROR;
             }
-            LOG_WARN_WITH_FUNC(__func__, "IMU 读取失败，沿用上一帧（{}/{}）: {}", consecutive_failures_,
+            // 短暂的读取失败不清除已经建立的 orientation_valid（通常只有几十 ms），
+            // 但启动阶段不能用失败帧凑收敛计数。
+            if (state_.orientation_valid < 0.5) {
+                consecutive_valid_samples_ = 0;
+            }
+            LOG_WARN_WITH_FUNC(__func__, "IMU read failed, using the previous frame ({}/{}): {}", consecutive_failures_,
                                options_.max_read_failures, result.error());
             return hardware_interface::return_type::OK;
         }
         consecutive_failures_ = 0;
 
         const double dt = sample_period(time, period);
-        filter_.update(sample.angular_velocity, sample.linear_acceleration, dt);
+        const bool accel_is_gravity =
+            acceleration_matches_gravity(sample.linear_acceleration, options_.filter.accel_tolerance);
+
+        // 启动阶段：只有加速度模长接近 1 g 时才允许用它初始化姿态。机器人被
+        // 抬起、放在斜面上或正在运动时，首帧加速度不是纯重力；此时保持未初始化，
+        // 而不是把运动加速度写成单位四元数/错误重力。
+        if (!filter_.initialized()) {
+            if (accel_is_gravity) {
+                filter_.update(sample.angular_velocity, sample.linear_acceleration, dt);
+                if (consecutive_valid_samples_ < options_.valid_samples) {
+                    ++consecutive_valid_samples_;
+                }
+            }
+        } else {
+            filter_.update(sample.angular_velocity, sample.linear_acceleration, dt);
+            // 已经收敛后，线性加速度只跳过本帧的加速度校正，不清除有效性；
+            // 否则机器人一开始走路就会把 orientation_valid 打成 0。
+            if (state_.orientation_valid < 0.5) {
+                if (accel_is_gravity) {
+                    if (consecutive_valid_samples_ < options_.valid_samples) {
+                        ++consecutive_valid_samples_;
+                    }
+                } else {
+                    consecutive_valid_samples_ = 0;
+                }
+            }
+        }
 
         state_.angular_velocity = sample.angular_velocity;
         state_.linear_acceleration = sample.linear_acceleration;
         state_.orientation = filter_.orientation();
+
+        // orientation_valid 是“滤波器已收敛且传感器健康”，不是“本帧数据新鲜度”：
+        // - 启动时累计到 valid_samples 个重力样本才置 1；
+        // - 置 1 后，运动中的线性加速度不清零；
+        // - 持续读失败、cleanup/reset 时清零。
+        // 控制器应 claim 此接口，在 0 时保持 hold/home，不要启动策略或让跌倒检测投票。
+        if (!filter_.initialized()) {
+            state_.orientation_valid = 0.0;
+        } else if (state_.orientation_valid < 0.5 &&
+                   consecutive_valid_samples_ >= options_.valid_samples) {
+            state_.orientation_valid = 1.0;
+            LOG_INFO_WITH_FUNC(__func__, "orientation_valid set after {} valid gravity samples",
+                               consecutive_valid_samples_);
+        }
+
         has_sample_ = true;
         return hardware_interface::return_type::OK;
     }

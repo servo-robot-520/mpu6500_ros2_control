@@ -15,6 +15,7 @@
                        orientation_accel_gain:='0.05'
                        orientation_integral_gain:='0.0'
                        orientation_accel_tolerance:='0.25'
+                       orientation_valid_samples:='25'
                        max_read_failures:='3'
                        log_level:='info'">
     <ros2_control name="${name}" type="sensor">
@@ -27,6 +28,7 @@
         <param name="orientation.accel_gain">${orientation_accel_gain}</param>
         <param name="orientation.integral_gain">${orientation_integral_gain}</param>
         <param name="orientation.accel_tolerance">${orientation_accel_tolerance}</param>
+        <param name="orientation.valid_samples">${orientation_valid_samples}</param>
         <param name="max_read_failures">${max_read_failures}</param>
         <param name="log.log_level">${log_level}</param>
         <param name="log.logger_name">mpu6500_ros2_control</param>
@@ -44,6 +46,8 @@
         <state_interface name="linear_acceleration.x"/>
         <state_interface name="linear_acceleration.y"/>
         <state_interface name="linear_acceleration.z"/>
+        <!-- 姿态已收敛且传感器健康时为 1；控制器应在 0 时保持 hold/home。 -->
+        <state_interface name="orientation_valid"/>
       </sensor>
     </ros2_control>
   </xacro:macro>

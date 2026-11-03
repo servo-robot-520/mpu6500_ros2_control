@@ -25,6 +25,7 @@ namespace mpu6500_ros2_control {
     /// - orientation.x/y/z/w
     /// - angular_velocity.x/y/z
     /// - linear_acceleration.x/y/z
+    /// - orientation_valid（可选）：姿态是否已收敛且传感器健康，1=可用，0=不可用。
     class MPU6500SensorInterface : public hardware_interface::SensorInterface {
     public:
         /// @brief 解析硬件参数并校验 URDF 中声明的状态接口，不访问设备。
@@ -66,6 +67,19 @@ namespace mpu6500_ros2_control {
             std::array<double, 3> angular_velocity{};
             /// 加速度，m/s²。
             std::array<double, 3> linear_acceleration{};
+            /// 姿态有效标志：1.0=可用，0.0=不可用。
+            ///
+            /// 它不是“本帧数据新鲜度”，而是“滤波器已收敛且传感器健康”：
+            /// - 启动后必须连续累计 valid_samples 个 |a|≈g 的样本才置 1，
+            ///   避免把上电瞬间的运动加速度当成重力；
+            /// - 置 1 后，运动中的线性加速度只会跳过本帧姿态校正，不会清零；
+            /// - 短暂读取失败（<= max_read_failures）不清零；持续失败、cleanup
+            ///   或 reset 时清零；
+            /// - yaw 不在有效性保证范围内：MPU6500 无磁力计，yaw 始终会漂移。
+            ///
+            /// 控制器应 claim 本接口，在它为 0 时保持 hold/home、暂不启动策略，
+            /// 跌倒检测也不投票；等为 1 后再进入正常控制。
+            double orientation_valid{0.0};
         };
 
         /// @brief 插件级配置。
@@ -74,6 +88,9 @@ namespace mpu6500_ros2_control {
             OrientationFilterOptions filter;
             /// 连续读取失败多少次后向 ResourceManager 报告 ERROR。
             int max_read_failures{3};
+            /// 启动阶段需要连续多少个 |a|≈g 的样本才把 orientation_valid 置 1。
+            /// 默认 25；50 Hz 下约 0.5 s，避免单帧偶然值被当成可信姿态。
+            int valid_samples{25};
         };
 
         /// @brief 解析并校验 URDF 硬件参数。
@@ -93,6 +110,8 @@ namespace mpu6500_ros2_control {
         Mpu6500IioDevice device_;
         OrientationFilter filter_;
         int consecutive_failures_{0};
+        /// 启动阶段连续有效加速度样本计数；orientation_valid 置 1 后不再使用。
+        int consecutive_valid_samples_{0};
         bool has_sample_{false};
         int64_t last_read_time_ns_{0};
     };

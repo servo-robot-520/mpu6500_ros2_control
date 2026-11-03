@@ -13,8 +13,8 @@ directly; it reads the IIO sysfs attributes exposed by the kernel driver
 ## Features
 
 - One plugin instance per `/dev/iio:deviceN` (or per IIO sysfs directory).
-- 10 exported state interfaces: quaternion orientation, angular velocity and
-  linear acceleration.
+- 10 standard state interfaces (quaternion orientation, angular velocity,
+  linear acceleration) plus an optional `orientation_valid` health flag.
 - Raw samples are converted to SI units using the device's `scale` attributes.
 - Configurable body-axis remapping and sign inversion for the mounting matrix.
 - Complementary quaternion filter: accelerometer constrains roll/pitch, gyro
@@ -124,13 +124,15 @@ Add `-DBUILD_TESTING=ON` to the CLion CMake options to build the tests.
     <state_interface name="linear_acceleration.x"/>
     <state_interface name="linear_acceleration.y"/>
     <state_interface name="linear_acceleration.z"/>
+    <!-- Optional: 1 when the attitude filter has converged and the sensor is healthy. -->
+    <state_interface name="orientation_valid"/>
   </sensor>
 </ros2_control>
 ```
 
 Only interfaces declared here are exported. `imu_sensor_broadcaster` requires
-the standard 10 interfaces above; a controller may declare a subset (for
-example only `angular_velocity.*` and `linear_acceleration.*`).
+the standard 10 interfaces above; `orientation_valid` is optional and is not
+published by that broadcaster.
 
 ### Two IMUs (head CS0 + body CS1)
 
@@ -146,7 +148,7 @@ body; the URDF names and `iio_device` paths define that:
     <param name="log.log_level">info</param>
   </hardware>
   <sensor name="body_imu">
-    <!-- same 10 state interfaces -->
+    <!-- same state interfaces, including orientation_valid if used -->
   </sensor>
 </ros2_control>
 ```
@@ -200,6 +202,7 @@ body; the URDF names and `iio_device` paths define that:
 | `orientation.accel_gain` | `0.05` | Complementary filter proportional gain (1/s). |
 | `orientation.integral_gain` | `0.0` | Gyro-bias integral gain (1/s²). `0` disables it. |
 | `orientation.accel_tolerance` | `0.25` | Maximum relative deviation of \|a\| from 1 g for accelerometer correction. |
+| `orientation.valid_samples` | `25` | Consecutive samples with acceleration magnitude ≈ 1 g required before `orientation_valid` becomes 1. At 50 Hz this is about 0.5 s. |
 
 ### Logging parameters
 
@@ -227,11 +230,41 @@ hardware parameters:
 | `orientation.x/y/z/w` | — | Complementary filter, body → world quaternion. |
 | `angular_velocity.x/y/z` | rad/s | `in_anglvel_*_raw` × scale, body frame. |
 | `linear_acceleration.x/y/z` | m/s² | `in_accel_*_raw` × scale, body frame. |
+| `orientation_valid` | 0/1 | Optional health flag; see below. |
 
 Coordinate convention follows ROS REP-103: x forward, y left, z up. An upright,
 stationary sensor reads `(0, 0, +g)` and exports the identity quaternion.
 `orientation` is produced from gravity and gyro only; yaw drifts and must not be
 used as a long-term heading reference.
+
+### Orientation validity
+
+`orientation_valid` is a **health/readiness flag**, not a per-sample freshness
+flag. It is exported only when declared in the URDF.
+
+| Value | Meaning |
+|---|---|
+| `0` | Startup, cleanup/reset, or persistent read failure. The attitude is not trustworthy. |
+| `1` | The filter has been initialized and `orientation.valid_samples` consecutive samples with acceleration magnitude ≈ 1 g have been observed. |
+
+Details:
+
+- During startup, an acceleration sample is used for initialization only when its
+  magnitude is within `orientation.accel_tolerance` of 1 g. Lifting or moving the
+  robot at boot therefore cannot turn linear acceleration into "gravity".
+- After the flag becomes 1, later linear acceleration only skips that cycle's
+  accelerometer correction; it does not clear the flag. Otherwise walking would
+  constantly disable the controller's attitude-related logic.
+- Transient read failures within `max_read_failures` keep the last sample and do
+  not clear an already-raised flag. Exceeding the threshold returns `ERROR` and
+  clears it.
+- `on_cleanup`, `on_shutdown`, reconfigure and filter reset clear the flag.
+- **Yaw is not covered by this guarantee.** MPU6500 has no magnetometer; yaw is
+  relative and drifts even when `orientation_valid == 1`.
+
+`duck_control` should claim `body_imu/orientation_valid` and hold its current
+target / skip the policy and fall detection while it is 0. A controller-side
+warm-up counter is still useful as a fallback when the interface is absent.
 
 ## Axis mounting
 
@@ -259,6 +292,9 @@ The same mapping is applied to gyro and acceleration.
 - Transient failures: keeps the last sample and returns `OK` for up to
   `max_read_failures` consecutive failures; the next failure returns `ERROR`.
   A successful read resets the counter.
+- `orientation_valid`: starts at 0, becomes 1 only after the convergence
+  condition described above; persistent failure, cleanup/reconfigure and reset
+  clear it.
 
 No command interfaces are exported; this is a read-only sensor component.
 
@@ -320,6 +356,9 @@ Tests cover:
 - scale conversion, axis map/sign, device-name checks, missing attributes,
   corrupt values, `sampling_frequency` write/failure, close/reopen;
 - filter initialization, roll convergence, pure gyro integration, invalid `dt`;
+- `orientation_valid` startup convergence, rejection of non-1 g startup
+  samples, persistence during linear acceleration, and clearing on persistent
+  failure/cleanup;
 - `SensorInterface` lifecycle, interface export, transient failure handling,
   cleanup/reconfigure, and two independent components (head + body);
 - pluginlib loading from the build tree.
