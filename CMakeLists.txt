@@ -79,4 +79,32 @@ ament_export_targets(mpu6500_ros2_controlTargets HAS_LIBRARY_TARGET)
 ament_export_dependencies(rclcpp rclcpp_lifecycle hardware_interface pluginlib
         common_cpp)
 
+if (BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+
+    ament_add_gtest(test_orientation_filter test/test_orientation_filter.cpp)
+    target_link_libraries(test_orientation_filter mpu6500_driver)
+
+    ament_add_gtest(test_iio_device test/test_iio_device.cpp)
+    target_include_directories(test_iio_device PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+    target_link_libraries(test_iio_device mpu6500_driver)
+
+    ament_add_gtest(test_sensor_interface test/test_sensor_interface.cpp)
+    target_include_directories(test_sensor_interface PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+    target_link_libraries(test_sensor_interface mpu6500_ros2_control)
+
+    # 构建树中的插件测试需要一份模拟的 ament index，否则 pluginlib 只能看到
+    # /opt/ros 下已安装的插件。
+    pluginlib_enable_plugin_testing(
+            CMAKE_TARGET_VAR mpu6500_pluginlib_test_target
+            AMENT_PREFIX_PATH_VAR mpu6500_pluginlib_test_path
+            PLUGIN_CATEGORY hardware_interface
+            PLUGIN_DESCRIPTIONS mpu6500_ros2_control_plugin_description.xml
+            PLUGIN_LIBRARIES mpu6500_ros2_control)
+    ament_add_gtest(test_plugin_loading test/test_plugin_loading.cpp
+            APPEND_ENV AMENT_PREFIX_PATH=${mpu6500_pluginlib_test_path})
+    add_dependencies(test_plugin_loading "${mpu6500_pluginlib_test_target}")
+    target_link_libraries(test_plugin_loading mpu6500_ros2_control pluginlib::pluginlib)
+endif ()
+
 ament_package()
