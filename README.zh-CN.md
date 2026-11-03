@@ -25,31 +25,6 @@
 - 支持可选的第二路 IMU（头部 + 身体）。默认只启用**头部**（SPI3 CS0），
   身体 IMU 接 CS1，默认关闭。
 
-## 包结构
-
-```text
-mpu6500_ros2_control/
-├─ include/mpu6500_ros2_control/
-│  ├─ mpu6500_iio_device.hpp      # IIO sysfs 读取，不依赖 ROS
-│  ├─ mpu6500_sensor_interface.hpp
-│  ├─ orientation_filter.hpp
-│  └─ result.hpp
-├─ src/
-│  ├─ mpu6500_iio_device.cpp
-│  ├─ mpu6500_sensor_interface.cpp
-│  └─ orientation_filter.cpp
-├─ test/
-│  ├─ fake_mpu6500.hpp            # 临时目录模拟 IIO sysfs
-│  ├─ test_iio_device.cpp
-│  ├─ test_orientation_filter.cpp
-│  ├─ test_sensor_interface.cpp
-│  └─ test_plugin_loading.cpp
-├─ urdf/mpu6500_imu.urdf.xacro    # 单路/双路 IMU 组件宏
-├─ mpu6500_ros2_control_plugin_description.xml
-├─ CMakeLists.txt
-└─ package.xml
-```
-
 ## 构建
 
 ### colcon

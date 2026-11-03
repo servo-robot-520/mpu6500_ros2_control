@@ -26,31 +26,6 @@ directly; it reads the IIO sysfs attributes exposed by the kernel driver
 - Optional second IMU (head + body). Default configuration enables **head only**
   (SPI3 CS0); the body IMU is CS1 and is disabled by default.
 
-## Package layout
-
-```text
-mpu6500_ros2_control/
-├─ include/mpu6500_ros2_control/
-│  ├─ mpu6500_iio_device.hpp      # IIO sysfs reader (no ROS dependency)
-│  ├─ mpu6500_sensor_interface.hpp
-│  ├─ orientation_filter.hpp
-│  └─ result.hpp
-├─ src/
-│  ├─ mpu6500_iio_device.cpp
-│  ├─ mpu6500_sensor_interface.cpp
-│  └─ orientation_filter.cpp
-├─ test/
-│  ├─ fake_mpu6500.hpp            # temporary sysfs-like fake device
-│  ├─ test_iio_device.cpp
-│  ├─ test_orientation_filter.cpp
-│  ├─ test_sensor_interface.cpp
-│  └─ test_plugin_loading.cpp
-├─ urdf/mpu6500_imu.urdf.xacro    # single / dual IMU component macros
-├─ mpu6500_ros2_control_plugin_description.xml
-├─ CMakeLists.txt
-└─ package.xml
-```
-
 ## Build
 
 ### colcon
