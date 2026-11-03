@@ -104,11 +104,14 @@ if (BUILD_TESTING)
             AMENT_PREFIX_PATH_VAR mpu6500_pluginlib_test_path
             PLUGIN_CATEGORY hardware_interface
             PLUGIN_DESCRIPTIONS mpu6500_ros2_control_plugin_description.xml
-            PLUGIN_LIBRARIES mpu6500_ros2_control)
-    ament_add_gtest(test_plugin_loading test/test_plugin_loading.cpp
+            PLUGIN_LIBRARIES mpu6500_ros2_control
+            # 聚合构建中 CMAKE_SOURCE_DIR 是工作区根目录，宏默认会去找根目录的
+            # package.xml；这里显式指向当前包的 manifest。
+            PACKAGE_XML "${CMAKE_CURRENT_SOURCE_DIR}/package.xml")
+    ament_add_gtest(test_mpu6500_plugin_loading test/test_plugin_loading.cpp
             APPEND_ENV AMENT_PREFIX_PATH=${mpu6500_pluginlib_test_path})
-    add_dependencies(test_plugin_loading "${mpu6500_pluginlib_test_target}")
-    target_link_libraries(test_plugin_loading mpu6500_ros2_control pluginlib::pluginlib)
+    add_dependencies(test_mpu6500_plugin_loading "${mpu6500_pluginlib_test_target}")
+    target_link_libraries(test_mpu6500_plugin_loading mpu6500_ros2_control pluginlib::pluginlib)
 endif ()
 
 ament_package()
