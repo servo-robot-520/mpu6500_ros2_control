@@ -71,6 +71,10 @@ install(
         ARCHIVE DESTINATION lib
         RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY urdf DESTINATION share/${PROJECT_NAME})
+install(
+        FILES README.md README.zh-CN.md
+        DESTINATION share/${PROJECT_NAME})
 install(
         FILES mpu6500_ros2_control_plugin_description.xml
         DESTINATION share/${PROJECT_NAME})

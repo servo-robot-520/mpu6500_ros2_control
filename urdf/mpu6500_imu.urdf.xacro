@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    单个 MPU6500 传感器组件。
+
+    一个组件对应一个 IIO 设备；插件不区分头部/身体，由 name 与 iio_device
+    决定。本工程约定：head_imu 接 SPI3 CS0，body_imu 接 CS1。
+  -->
+  <xacro:macro name="mpu6500_sensor"
+               params="name
+                       iio_device:='/dev/iio:device0'
+                       axis_map:='x,y,z'
+                       expected_name:=''
+                       verify_name:='true'
+                       orientation_accel_gain:='0.05'
+                       orientation_integral_gain:='0.0'
+                       orientation_accel_tolerance:='0.25'
+                       max_read_failures:='3'
+                       log_level:='info'">
+    <ros2_control name="${name}" type="sensor">
+      <hardware>
+        <plugin>mpu6500_ros2_control/MPU6500SensorInterface</plugin>
+        <param name="iio_device">${iio_device}</param>
+        <param name="axis_map">${axis_map}</param>
+        <param name="expected_name">${expected_name}</param>
+        <param name="verify_name">${verify_name}</param>
+        <param name="orientation.accel_gain">${orientation_accel_gain}</param>
+        <param name="orientation.integral_gain">${orientation_integral_gain}</param>
+        <param name="orientation.accel_tolerance">${orientation_accel_tolerance}</param>
+        <param name="max_read_failures">${max_read_failures}</param>
+        <param name="log.log_level">${log_level}</param>
+        <param name="log.logger_name">mpu6500_ros2_control</param>
+        <param name="log.node_name">mpu6500_ros2_control</param>
+      </hardware>
+
+      <sensor name="${name}">
+        <state_interface name="orientation.x"/>
+        <state_interface name="orientation.y"/>
+        <state_interface name="orientation.z"/>
+        <state_interface name="orientation.w"/>
+        <state_interface name="angular_velocity.x"/>
+        <state_interface name="angular_velocity.y"/>
+        <state_interface name="angular_velocity.z"/>
+        <state_interface name="linear_acceleration.x"/>
+        <state_interface name="linear_acceleration.y"/>
+        <state_interface name="linear_acceleration.z"/>
+      </sensor>
+    </ros2_control>
+  </xacro:macro>
+
+  <!--
+    头部 + 身体两路 MPU6500。
+
+    默认只启用头部（CS0）；把 enable_body 设为 true 才会加入身体组件（CS1）。
+  -->
+  <xacro:macro name="mpu6500_imu_pair"
+               params="enable_head:='true'
+                       enable_body:='false'
+                       head_iio_device:='/dev/iio:device0'
+                       body_iio_device:='/dev/iio:device1'
+                       head_axis_map:='x,y,z'
+                       body_axis_map:='x,y,z'">
+    <xacro:if value="${enable_head}">
+      <xacro:mpu6500_sensor name="head_imu"
+                            iio_device="${head_iio_device}"
+                            axis_map="${head_axis_map}"/>
+    </xacro:if>
+    <xacro:if value="${enable_body}">
+      <xacro:mpu6500_sensor name="body_imu"
+                            iio_device="${body_iio_device}"
+                            axis_map="${body_axis_map}"/>
+    </xacro:if>
+  </xacro:macro>
+</robot>
