@@ -77,7 +77,7 @@ namespace mpu6500_ros2_control {
         /// @brief 读取一帧原始数据并换算为 SI 单位。
         /// @param sample 输出样本，仅在成功时有效。
         /// @return 成功或携带错误信息。
-        Result read(ImuSample* sample);
+        Result read(ImuSample* sample) const;
 
     private:
         static constexpr int kChannelCount = 6;

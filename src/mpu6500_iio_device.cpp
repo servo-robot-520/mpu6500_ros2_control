@@ -6,7 +6,6 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -42,13 +41,13 @@ namespace mpu6500_ros2_control {
             std::ifstream file(path);
             if (!file.is_open()) {
                 const int error_number = errno;
-                return Result::failure("无法打开 " + path +
+                return Result::failure("Can not open " + path +
                                        (error_number != 0 ? ": " + std::string(std::strerror(error_number)) : ""));
             }
             std::ostringstream buffer;
             buffer << file.rdbuf();
             if (file.bad()) {
-                return Result::failure("读取 " + path + " 失败");
+                return Result::failure("Failed to read " + path);
             }
             *text = buffer.str();
             return Result::success();
@@ -58,13 +57,13 @@ namespace mpu6500_ros2_control {
         Result parse_double(const std::string& text, double* value) {
             const std::string trimmed = trim(text);
             if (trimmed.empty()) {
-                return Result::failure("属性值为空");
+                return Result::failure("Empty double attribute value");
             }
             errno = 0;
             char* end = nullptr;
             const double parsed = std::strtod(trimmed.c_str(), &end);
             if (errno != 0 || end == trimmed.c_str() || *end != '\0' || !std::isfinite(parsed)) {
-                return Result::failure("无法解析数值 '" + trimmed + "'");
+                return Result::failure("Unable to parse numerical value '" + trimmed + "'");
             }
             *value = parsed;
             return Result::success();
@@ -74,13 +73,13 @@ namespace mpu6500_ros2_control {
         Result parse_integer(const std::string& text, long long* value) {
             const std::string trimmed = trim(text);
             if (trimmed.empty()) {
-                return Result::failure("属性值为空");
+                return Result::failure("Empty int attribute value");
             }
             errno = 0;
             char* end = nullptr;
             const long long parsed = std::strtoll(trimmed.c_str(), &end, 10);
             if (errno != 0 || end == trimmed.c_str() || *end != '\0') {
-                return Result::failure("无法解析整数 '" + trimmed + "'");
+                return Result::failure("Unable to parse integer '" + trimmed + "'");
             }
             *value = parsed;
             return Result::success();
@@ -92,7 +91,7 @@ namespace mpu6500_ros2_control {
         /// /sys/bus/iio/devices/ 下。也允许直接传入该目录或模拟目录。
         Result resolve_device_directory(const std::string& path, std::string* directory) {
             if (path.empty()) {
-                return Result::failure("IIO 设备路径为空");
+                return Result::failure("The IIO device path is empty");
             }
 
             std::error_code error;
@@ -102,8 +101,7 @@ namespace mpu6500_ros2_control {
                 return Result::success();
             }
 
-            const std::string basename = input.filename().string();
-            if (basename.rfind("iio:device", 0) == 0) {
+            if (const std::string basename = input.filename().string(); basename.rfind("iio:device", 0) == 0) {
                 const std::filesystem::path candidate =
                     std::filesystem::path("/sys/bus/iio/devices") / basename;
                 if (std::filesystem::is_directory(candidate, error)) {
@@ -112,8 +110,8 @@ namespace mpu6500_ros2_control {
                 }
             }
 
-            return Result::failure("IIO 设备目录不存在: " + path +
-                                   "（应指向 /dev/iio:deviceN 或 /sys/bus/iio/devices/iio:deviceN）");
+            return Result::failure("IIO device catalog does not exist: " + path +
+                                   "(It should point to /dev/iio:deviceN or /sys/bus/iio/devices/iio:deviceN)");
         }
 
         /// @brief 打开一个只读属性文件。
@@ -121,7 +119,7 @@ namespace mpu6500_ros2_control {
             errno = 0;
             const int opened = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
             if (opened < 0) {
-                return Result::failure("无法打开 " + path + ": " + std::strerror(errno));
+                return Result::failure("Failed to open " + path + ": " + std::strerror(errno));
             }
             *fd = opened;
             return Result::success();
@@ -135,7 +133,7 @@ namespace mpu6500_ros2_control {
             errno = 0;
             const int fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
             if (fd < 0) {
-                return Result::failure("无法打开 " + path + ": " + std::strerror(errno));
+                return Result::failure("Failed to open " + path + ": " + std::strerror(errno));
             }
 
             std::size_t offset = 0;
@@ -147,14 +145,14 @@ namespace mpu6500_ros2_control {
                     }
                     const int error_number = errno;
                     ::close(fd);
-                    return Result::failure("写入 " + path + " 失败: " +
+                    return Result::failure("Failed to write " + path  +
                                            std::strerror(error_number));
                 }
                 offset += static_cast<std::size_t>(written);
             }
 
             if (::close(fd) != 0) {
-                return Result::failure("关闭 " + path + " 失败: " + std::strerror(errno));
+                return Result::failure("Failed to write " + path + std::strerror(errno));
             }
             return Result::success();
         }
@@ -171,16 +169,16 @@ namespace mpu6500_ros2_control {
                 result = read_text_file(shared, &text);
             }
             if (!result) {
-                return Result::failure("缺少 IIO scale 属性 " + per_channel + " / " + shared +
-                                       "；也可以在插件参数中显式设置 gyro_scale / accel_scale");
+                return Result::failure("Missing IIO scale property " + per_channel + " / " + shared +
+                                       "; You can also explicitly set gyro_scale / accel_scale in the plugin parameters.");
             }
 
             double value = 0.0;
             if (const auto parsed = parse_double(text, &value); !parsed) {
-                return Result::failure("解析 " + per_channel + " 失败: " + parsed.error());
+                return Result::failure("Failed to parse " + per_channel + parsed.error());
             }
             if (!(value > 0.0)) {
-                return Result::failure("IIO scale 必须为正数: " + per_channel);
+                return Result::failure("The IIO scale must be a positive number: " + per_channel);
             }
             *scale = value;
             return Result::success();
@@ -195,10 +193,10 @@ namespace mpu6500_ros2_control {
             } while (count < 0 && errno == EINTR);
 
             if (count < 0) {
-                return Result::failure("读取 " + path + " 失败: " + std::strerror(errno));
+                return Result::failure("Failed to read " + path + std::strerror(errno));
             }
             if (count == 0) {
-                return Result::failure("读取 " + path + " 返回空内容");
+                return Result::failure("Read " + path + " returns empty content");
             }
             buffer[static_cast<std::size_t>(count)] = '\0';
             return parse_integer(buffer.data(), value);
@@ -232,7 +230,7 @@ namespace mpu6500_ros2_control {
         }
 
         if (options.device_path.empty()) {
-            return Result::failure("iio_device 未配置");
+            return Result::failure("iio_device not configure");
         }
 
         // 轴映射必须是 x/y/z 的一个排列，符号只能是 +1/-1。
@@ -240,11 +238,11 @@ namespace mpu6500_ros2_control {
         for (int axis = 0; axis < 3; ++axis) {
             const int source = options.axis_map[axis];
             if (source < 0 || source > 2 || used[source]) {
-                return Result::failure("axis_map 必须是 x/y/z 的一个排列");
+                return Result::failure("axis_map must be a permutation of x/y/z");
             }
             used[source] = true;
             if (options.axis_sign[axis] != 1.0 && options.axis_sign[axis] != -1.0) {
-                return Result::failure("axis_sign 只能取 +1 或 -1");
+                return Result::failure("axis_sign can only be +1 or -1");
             }
         }
 
@@ -272,12 +270,12 @@ namespace mpu6500_ros2_control {
         if (!name_matches) {
             if (options.verify_name) {
                 close();
-                return Result::failure("IIO 设备名不匹配: 实际 '" + device_name_ + "', 期望 '" +
+                return Result::failure("IIO device name mismatch: find '" + device_name_ + "', expected '" +
                                        (options.expected_name.empty() ? "mpu6500/mpu6050"
                                                                        : options.expected_name) +
-                                       "'；如确认设备正确可设置 verify_name=false");
+                                       "'; If you confirm that the device is correct, you can set verify_name=false.");
             }
-            opened_info.warnings.push_back("IIO 设备名 '" + device_name_ + "' 不在已知 MPU6500 名称中");
+            opened_info.warnings.push_back("The IIO device name '" + device_name_ + "' is not among the known MPU6500 names.");
         }
 
         // 一次性打开 6 个 raw 属性，read() 中只做 pread()。
@@ -316,9 +314,9 @@ namespace mpu6500_ros2_control {
             if (result = write_text_file(device_directory_ + "/sampling_frequency", text.str()); !result) {
                 if (options.strict_sampling_frequency) {
                     close();
-                    return Result::failure("写入 sampling_frequency 失败: " + result.error());
+                    return Result::failure("Failed to writ sampling_frequency: " + result.error());
                 }
-                opened_info.warnings.push_back("未能写入 sampling_frequency: " + result.error());
+                opened_info.warnings.push_back("Failed to write sampling_frequency: " + result.error());
             }
         }
 
@@ -333,18 +331,18 @@ namespace mpu6500_ros2_control {
         return Result::success();
     }
 
-    Result Mpu6500IioDevice::read(ImuSample* sample) {
+    Result Mpu6500IioDevice::read(ImuSample* sample) const {
         if (!is_open()) {
-            return Result::failure("IIO 设备未打开");
+            return Result::failure("IIO device not turned on");
         }
         if (sample == nullptr) {
-            return Result::failure("read() 的输出指针为空");
+            return Result::failure("The ImuSample is null.");
         }
 
         std::array<long long, kChannelCount> raw{};
         for (int index = 0; index < kChannelCount; ++index) {
             if (const int fd = fds_[index]; fd < 0) {
-                return Result::failure("IIO 通道未打开");
+                return Result::failure("IIO channel not open");
             }
             const char* channel = index < 3 ? kGyroChannels[index] : kAccelChannels[index - 3];
             const std::string path = device_directory_ + "/" + channel;
@@ -371,12 +369,12 @@ namespace mpu6500_ros2_control {
 
         for (const double value : result.angular_velocity) {
             if (!std::isfinite(value)) {
-                return Result::failure("角速度包含非有限值");
+                return Result::failure("Angular velocity includes non-finite values");
             }
         }
         for (const double value : result.linear_acceleration) {
             if (!std::isfinite(value)) {
-                return Result::failure("加速度包含非有限值");
+                return Result::failure("Acceleration includes non-finite values");
             }
         }
 
