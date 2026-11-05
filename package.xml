@@ -4,7 +4,7 @@
   <name>mpu6500_ros2_control</name>
   <version>0.1.0</version>
   <description>ros2_control sensor interface for the InvenSense MPU6500 6-axis IMU (Linux IIO)</description>
-  <maintainer email="mdmbct@163.com">greenhand</maintainer>
+  <maintainer email="ohmdmbct@gmail.com">greenhand</maintainer>
   <license>GPL-3.0-only</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

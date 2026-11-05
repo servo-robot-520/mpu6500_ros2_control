@@ -27,8 +27,8 @@ namespace mpu6500_ros2_control {
         bool acceleration_matches_gravity(const std::array<double, 3>& acceleration,
                                           const double tolerance) {
             const double norm = std::sqrt(acceleration[0] * acceleration[0] +
-                                          acceleration[1] * acceleration[1] +
-                                          acceleration[2] * acceleration[2]);
+                acceleration[1] * acceleration[1] +
+                acceleration[2] * acceleration[2]);
             const double relative_tolerance = std::max(0.0, tolerance);
             return std::isfinite(norm) && norm > 1e-6 &&
                 std::abs(norm - kGravity) <= kGravity * relative_tolerance;
@@ -129,7 +129,7 @@ namespace mpu6500_ros2_control {
                 }
                 if (position + 1 != token.size()) {
                     return Result::failure("axis_map item " + std::to_string(axis + 1) +
-                                           " is invalid: '" + token + "'");
+                        " is invalid: '" + token + "'");
                 }
                 int source_axis = -1;
                 switch (token[position]) {
@@ -144,7 +144,7 @@ namespace mpu6500_ros2_control {
                     break;
                 default:
                     return Result::failure("axis_map item " + std::to_string(axis + 1) +
-                                           " must be x/y/z: '" + token + "'");
+                        " must be x/y/z: '" + token + "'");
                 }
                 if (used[static_cast<std::size_t>(source_axis)]) {
                     return Result::failure("The axis_map cannot reuse the same sensor axis.");
@@ -210,7 +210,7 @@ namespace mpu6500_ros2_control {
         }
         if (info_.sensors.size() > 1) {
             return fail("One MPU6500SensorInterface instance can only correspond to one <sensor>; "
-                        "for dual IMUs, declare two independent <ros2_control type=\"sensor\"> components.");
+                "for dual IMUs, declare two independent <ros2_control type=\"sensor\"> components.");
         }
 
         const auto& sensor = info_.sensors.front();
@@ -220,8 +220,8 @@ namespace mpu6500_ros2_control {
         for (const auto& state_interface : sensor.state_interfaces) {
             if (!supported_state_interfaces().contains(state_interface.name)) {
                 return fail("sensor '" + sensor.name + "': unsupported state interface '" + state_interface.name +
-                            "' (supported: orientation.x/y/z/w, angular_velocity.x/y/z, "
-                            "linear_acceleration.x/y/z, orientation_valid)");
+                    "' (supported: orientation.x/y/z/w, angular_velocity.x/y/z, "
+                    "linear_acceleration.x/y/z, orientation_valid)");
             }
         }
 
@@ -524,7 +524,8 @@ namespace mpu6500_ros2_control {
                     ++consecutive_valid_samples_;
                 }
             }
-        } else {
+        }
+        else {
             filter_.update(sample.angular_velocity, sample.linear_acceleration, dt);
             // 已经收敛后，线性加速度只跳过本帧的加速度校正，不清除有效性；
             // 否则机器人一开始走路就会把 orientation_valid 打成 0。
@@ -533,7 +534,8 @@ namespace mpu6500_ros2_control {
                     if (consecutive_valid_samples_ < options_.valid_samples) {
                         ++consecutive_valid_samples_;
                     }
-                } else {
+                }
+                else {
                     consecutive_valid_samples_ = 0;
                 }
             }
@@ -550,8 +552,9 @@ namespace mpu6500_ros2_control {
         // 控制器应 claim 此接口，在 0 时保持 hold/home，不要启动策略或让跌倒检测投票。
         if (!filter_.initialized()) {
             state_.orientation_valid = 0.0;
-        } else if (state_.orientation_valid < 0.5 &&
-                   consecutive_valid_samples_ >= options_.valid_samples) {
+        }
+        else if (state_.orientation_valid < 0.5 &&
+            consecutive_valid_samples_ >= options_.valid_samples) {
             state_.orientation_valid = 1.0;
             LOG_INFO_WITH_FUNC(__func__, "orientation_valid set after {} valid gravity samples",
                                consecutive_valid_samples_);

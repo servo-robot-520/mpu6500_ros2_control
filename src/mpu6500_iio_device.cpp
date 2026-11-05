@@ -42,7 +42,7 @@ namespace mpu6500_ros2_control {
             if (!file.is_open()) {
                 const int error_number = errno;
                 return Result::failure("Can not open " + path +
-                                       (error_number != 0 ? ": " + std::string(std::strerror(error_number)) : ""));
+                    (error_number != 0 ? ": " + std::string(std::strerror(error_number)) : ""));
             }
             std::ostringstream buffer;
             buffer << file.rdbuf();
@@ -111,7 +111,7 @@ namespace mpu6500_ros2_control {
             }
 
             return Result::failure("IIO device catalog does not exist: " + path +
-                                   "(It should point to /dev/iio:deviceN or /sys/bus/iio/devices/iio:deviceN)");
+                "(It should point to /dev/iio:deviceN or /sys/bus/iio/devices/iio:deviceN)");
         }
 
         /// @brief 打开一个只读属性文件。
@@ -145,8 +145,8 @@ namespace mpu6500_ros2_control {
                     }
                     const int error_number = errno;
                     ::close(fd);
-                    return Result::failure("Failed to write " + path  +
-                                           std::strerror(error_number));
+                    return Result::failure("Failed to write " + path +
+                        std::strerror(error_number));
                 }
                 offset += static_cast<std::size_t>(written);
             }
@@ -170,7 +170,7 @@ namespace mpu6500_ros2_control {
             }
             if (!result) {
                 return Result::failure("Missing IIO scale property " + per_channel + " / " + shared +
-                                       "; You can also explicitly set gyro_scale / accel_scale in the plugin parameters.");
+                    "; You can also explicitly set gyro_scale / accel_scale in the plugin parameters.");
             }
 
             double value = 0.0;
@@ -190,7 +190,8 @@ namespace mpu6500_ros2_control {
             ssize_t count = 0;
             do {
                 count = ::pread(fd, buffer.data(), buffer.size() - 1, 0);
-            } while (count < 0 && errno == EINTR);
+            }
+            while (count < 0 && errno == EINTR);
 
             if (count < 0) {
                 return Result::failure("Failed to read " + path + std::strerror(errno));
@@ -264,16 +265,17 @@ namespace mpu6500_ros2_control {
 
         const bool name_matches =
             options.expected_name.empty()
-                ? (device_name_.find("mpu6500") != std::string::npos ||
-                   device_name_.find("mpu6050") != std::string::npos)
-                : device_name_ == options.expected_name;
+            ? (device_name_.find("mpu6500") != std::string::npos ||
+                device_name_.find("mpu6050") != std::string::npos)
+            : device_name_ == options.expected_name;
         if (!name_matches) {
             if (options.verify_name) {
                 close();
                 return Result::failure("IIO device name mismatch: find '" + device_name_ + "', expected '" +
-                                       (options.expected_name.empty() ? "mpu6500/mpu6050"
-                                                                       : options.expected_name) +
-                                       "'; If you confirm that the device is correct, you can set verify_name=false.");
+                    (options.expected_name.empty()
+                        ? "mpu6500/mpu6050"
+                        : options.expected_name) +
+                    "'; If you confirm that the device is correct, you can set verify_name=false.");
             }
             opened_info.warnings.push_back("The IIO device name '" + device_name_ + "' is not among the known MPU6500 names.");
         }
@@ -295,14 +297,16 @@ namespace mpu6500_ros2_control {
         for (int axis = 0; axis < 3; ++axis) {
             if (options.gyro_scale > 0.0) {
                 gyro_scale_[axis] = options.gyro_scale;
-            } else if (result = read_scale(device_directory_, "anglvel", axis, &gyro_scale_[axis]); !result) {
+            }
+            else if (result = read_scale(device_directory_, "anglvel", axis, &gyro_scale_[axis]); !result) {
                 close();
                 return result;
             }
 
             if (options.accel_scale > 0.0) {
                 accel_scale_[axis] = options.accel_scale;
-            } else if (result = read_scale(device_directory_, "accel", axis, &accel_scale_[axis]); !result) {
+            }
+            else if (result = read_scale(device_directory_, "accel", axis, &accel_scale_[axis]); !result) {
                 close();
                 return result;
             }
