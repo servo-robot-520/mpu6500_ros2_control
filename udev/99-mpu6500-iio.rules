@@ -1,0 +1,22 @@
+# MPU6500 (LubanCat-Zero / RK3566) stable IIO device aliases.
+#
+# 两路 MPU6500 挂在 SPI3 上，用片选区分。本规则只负责「片选 -> 稳定别名」，
+# 不绑定任何安装位置（头部/躯干等语义由使用方在自己的配置/URDF 中决定）：
+#   SPI3 CS0 (spi3.0) -> imu0
+#   SPI3 CS1 (spi3.1) -> imu1
+#
+# /dev/iio:deviceN 的编号随内核探测顺序变化，这里按 SPI 片选生成固定别名：
+#   /dev/mpu6500-0 -> /dev/iio:deviceN(spi3.0)
+#   /dev/mpu6500-1 -> /dev/iio:deviceN(spi3.1)
+# 驱动已支持符号链接别名（内部会解析到 /sys/bus/iio/devices/iio:deviceN）。
+#
+# 安装：sudo cp 99-mpu6500-iio.rules /etc/udev/rules.d/
+#       sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=iio
+
+SUBSYSTEM!="iio", GOTO="mpu6500_iio_end"
+ATTR{name}!="mpu6500", GOTO="mpu6500_iio_end"
+
+KERNELS=="spi3.0", SYMLINK+="mpu6500-0"
+KERNELS=="spi3.1", SYMLINK+="mpu6500-1"
+
+LABEL="mpu6500_iio_end"
