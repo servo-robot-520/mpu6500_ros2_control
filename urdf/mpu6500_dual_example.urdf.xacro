@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!--
+  双 MPU6500 示例机器人模型（仅用于本功能包的自带示例 launch）。
+
+  它只包含一个 base_link 与两个 IMU 坐标系，并通过 mpu6500_ros2_control.urdf.xacro 的
+  宏生成两路 ros2_control <sensor> 组件（imu0 = SPI3 CS0，imu1 = SPI3 CS1）。
+  真实整机请把 mpu6500_ros2_control.urdf.xacro 的宏直接包含进你的机器人 URDF，并按你的
+  连杆命名（例如 microduck_rev 用 imu_trunk / imu_head）建立 link 与 fixed joint。
+
+  设备路径默认使用 udev 稳定别名（udev/99-mpu6500-iio.rules），也可用
+  xacro 参数 imu0_iio_device / imu1_iio_device 覆盖为 /dev/iio:deviceN。
+-->
+<robot name="mpu6500_dual_example" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="imu0_iio_device" default="/dev/mpu6500-0"/>
+  <xacro:arg name="imu1_iio_device" default="/dev/mpu6500-1"/>
+
+  <xacro:include filename="mpu6500_ros2_control.urdf.xacro"/>
+
+  <link name="base_link"/>
+
+  <link name="imu0"/>
+  <joint name="imu0_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu0"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="imu1"/>
+  <joint name="imu1_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:mpu6500_imu_pair
+      enable_imu0="true"
+      enable_imu1="true"
+      imu0_iio_device="$(arg imu0_iio_device)"
+      imu1_iio_device="$(arg imu1_iio_device)"/>
+</robot>

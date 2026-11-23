@@ -72,8 +72,13 @@ install(
         RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY urdf DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY udev DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY docs DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/install_udev_rules.sh scripts/install_rt_limits.sh
+        DESTINATION share/${PROJECT_NAME}/scripts)
 install(
-        FILES README.md README.zh-CN.md
+        FILES README.md
         DESTINATION share/${PROJECT_NAME})
 install(
         FILES mpu6500_ros2_control_plugin_description.xml
