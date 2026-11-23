@@ -89,6 +89,8 @@ namespace mpu6500_ros2_control {
         ///
         /// /dev/iio:deviceN 字符设备本身不用于读取属性；同名的 sysfs 目录位于
         /// /sys/bus/iio/devices/ 下。也允许直接传入该目录或模拟目录。
+        /// 路径会先做一次符号链接解析，因此 udev 生成的稳定别名
+        /// (例如 /dev/mpu6500-0 -> /dev/iio:device0) 也可直接使用。
         Result resolve_device_directory(const std::string& path, std::string* directory) {
             if (path.empty()) {
                 return Result::failure("The IIO device path is empty");
@@ -96,22 +98,36 @@ namespace mpu6500_ros2_control {
 
             std::error_code error;
             const std::filesystem::path input(path);
-            if (std::filesystem::is_directory(input, error)) {
-                *directory = input.string();
-                return Result::success();
+
+            // 解析符号链接（如 udev 稳定别名）；失败时退回原始路径。
+            std::filesystem::path resolved = std::filesystem::weakly_canonical(input, error);
+            if (error) {
+                resolved = input;
             }
 
-            if (const std::string basename = input.filename().string(); basename.rfind("iio:device", 0) == 0) {
-                const std::filesystem::path candidate =
-                    std::filesystem::path("/sys/bus/iio/devices") / basename;
+            // 1) 本身就是目录（真实 sysfs 目录，或指向目录的符号链接）。
+            for (const auto& candidate : {resolved, input}) {
                 if (std::filesystem::is_directory(candidate, error)) {
                     *directory = candidate.string();
                     return Result::success();
                 }
             }
 
+            // 2) /dev/iio:deviceN 或符号链接解析后的同名基名，映射到 sysfs。
+            for (const auto& candidate_path : {resolved, input}) {
+                if (const std::string basename = candidate_path.filename().string(); basename.rfind("iio:device", 0) == 0) {
+                    const std::filesystem::path candidate =
+                        std::filesystem::path("/sys/bus/iio/devices") / basename;
+                    if (std::filesystem::is_directory(candidate, error)) {
+                        *directory = candidate.string();
+                        return Result::success();
+                    }
+                }
+            }
+
             return Result::failure("IIO device catalog does not exist: " + path +
-                "(It should point to /dev/iio:deviceN or /sys/bus/iio/devices/iio:deviceN)");
+                "(It should point to /dev/iio:deviceN, /sys/bus/iio/devices/iio:deviceN, "
+                "a stable alias, or a sysfs-like directory)");
         }
 
         /// @brief 打开一个只读属性文件。

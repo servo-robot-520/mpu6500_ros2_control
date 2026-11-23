@@ -15,14 +15,16 @@ namespace mpu6500_ros2_control {
     };
 
     /// @brief 基于加速度计与陀螺的互补姿态滤波器。
+    /// 用加速度计的重力参考去校正陀螺积分姿态的互补滤波器，补齐 MPU6500 没有姿态输出的短板，
+    /// 并明确区分「短期角速度可信」和「长期 roll/pitch 可信、yaw 会漂」。
     ///
-    /// MPU6500 没有磁力计，也没有板载四元数。本滤波器输出 body->world 四元数：
+    /// MPU6500 没有磁力计，也没有板载四元数。本滤波器用来把 MPU6500 的陀螺和加速度计融合成姿态四元数
     /// - roll/pitch 由重力方向长期约束；
     /// - yaw 仅由陀螺积分得到，会缓慢漂移；
     /// - 当加速度模长明显偏离 1 g（剧烈运动）时，本帧不做加速度校正。
     ///
     /// 坐标系约定与 ROS REP-103 一致：静止直立时 body z 轴朝上，
-    /// 加速度计读数为 (0, 0, +g)，四元数为 (x=0, y=0, z=0, w=1)。
+    /// 此时加速度计读数为 (0, 0, +g)，四元数为 (x=0, y=0, z=0, w=1)。
     class OrientationFilter {
     public:
         explicit OrientationFilter(const OrientationFilterOptions& options = OrientationFilterOptions{});
@@ -41,6 +43,7 @@ namespace mpu6500_ros2_control {
         [[nodiscard]] std::array<double, 4> orientation() const;
 
         /// @brief 是否已经用一帧有效加速度完成初始化。
+        /// 第一次拿到 |a|≈g 的有效样本时用重力初始化姿态（initialized() 由 false→true），在此之前姿态视为无效。
         [[nodiscard]] bool initialized() const {
             return initialized_;
         }

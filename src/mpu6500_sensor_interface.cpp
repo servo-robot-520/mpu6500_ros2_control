@@ -238,6 +238,7 @@ namespace mpu6500_ros2_control {
         return hardware_interface::CallbackReturn::SUCCESS;
     }
 
+    /// @brief 解析并校验 URDF 硬件参数（各参数含义见其所在行的注释）。
     hardware_interface::CallbackReturn MPU6500SensorInterface::parse_options(const char* caller) {
         auto fail = [caller](const std::string& message) {
             LOG_ERROR_WITH_FUNC(caller, "{}", message);
@@ -247,16 +248,18 @@ namespace mpu6500_ros2_control {
         options_ = Options{};
         const auto& parameters = info_.hardware_parameters;
 
+        // 必填：IIO 设备路径，支持 /dev/iio:deviceN 或 udev 别名 /dev/mpu6500-0、/dev/mpu6500-1
         const auto device = parameters.find("iio_device");
         if (device == parameters.end() || device->second.empty()) {
             return fail("The required hardware parameter iio_device is missing (example: /dev/iio:device0)");
         }
         options_.device.device_path = device->second;
 
+        // 可选：期望设备名，为空则接受 mpu6500/mpu6050
         if (const auto it = parameters.find("expected_name"); it != parameters.end()) {
             options_.device.expected_name = it->second;
         }
-
+        // 可选：是否严格校验设备名（默认 true；false 时仅告警）
         if (const auto it = parameters.find("verify_name"); it != parameters.end()) {
             if (const auto result = parse_boolean_parameter("verify_name", it->second,
                                                             &options_.device.verify_name);
@@ -264,7 +267,7 @@ namespace mpu6500_ros2_control {
                 return fail(result.error());
             }
         }
-
+        // 可选：车体系->传感器轴映射，如 "x,-y,z"（默认 x,y,z，三轴不可重复）
         if (const auto it = parameters.find("axis_map"); it != parameters.end()) {
             if (const auto result = parse_axis_map(it->second, &options_.device.axis_map,
                                                    &options_.device.axis_sign);
@@ -272,7 +275,7 @@ namespace mpu6500_ros2_control {
                 return fail(result.error());
             }
         }
-
+        // 可选：角速度 scale（<=0 自动从 sysfs 的 scale 文件读，否则使用自定义值），范围 [0, 1e6]
         if (const auto it = parameters.find("gyro_scale"); it != parameters.end()) {
             if (const auto result = parse_real_parameter("gyro_scale", it->second, 0.0, 1.0e6,
                                                          &options_.device.gyro_scale);
@@ -280,7 +283,7 @@ namespace mpu6500_ros2_control {
                 return fail(result.error());
             }
         }
-
+        // 可选：加速度 scale（<=0 自动从 sysfs 的 scale 文件读，否则使用自定义值），范围 [0, 1e6]
         if (const auto it = parameters.find("accel_scale"); it != parameters.end()) {
             if (const auto result = parse_real_parameter("accel_scale", it->second, 0.0, 1.0e6,
                                                          &options_.device.accel_scale);
@@ -288,7 +291,7 @@ namespace mpu6500_ros2_control {
                 return fail(result.error());
             }
         }
-
+        // 可选：>0 时写入采样频率，单位 Hz，范围 [0, 10000]
         if (const auto it = parameters.find("sampling_frequency_hz"); it != parameters.end()) {
             if (const auto result = parse_real_parameter("sampling_frequency_hz", it->second, 0.0, 10000.0,
                                                          &options_.device.sampling_frequency_hz);
@@ -297,6 +300,7 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        // 可选：写采样频率失败是否判错（默认 false，仅告警）
         if (const auto it = parameters.find("strict_sampling_frequency"); it != parameters.end()) {
             if (const auto result = parse_boolean_parameter("strict_sampling_frequency", it->second,
                                                             &options_.device.strict_sampling_frequency);
@@ -305,6 +309,7 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        // 可选：连续读失败超过该次数才报 ERROR（默认 3，范围 [0, 1000]）
         if (const auto it = parameters.find("max_read_failures"); it != parameters.end()) {
             if (const auto result = parse_integer_parameter("max_read_failures", it->second, 0, 1000,
                                                             &options_.max_read_failures);
@@ -313,6 +318,7 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        // 可选：加速度比例校正增益 (1/s)，默认 0.05，范围 [0, 100]
         if (const auto it = parameters.find("orientation.accel_gain"); it != parameters.end()) {
             if (const auto result = parse_real_parameter("orientation.accel_gain", it->second, 0.0, 100.0,
                                                          &options_.filter.accel_gain);
@@ -321,6 +327,7 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        // 可选：加速度积分增益 (1/s^2)，估陀螺零偏，默认 0（关闭），范围 [0, 100]
         if (const auto it = parameters.find("orientation.integral_gain"); it != parameters.end()) {
             if (const auto result = parse_real_parameter("orientation.integral_gain", it->second, 0.0, 100.0,
                                                          &options_.filter.integral_gain);
@@ -329,6 +336,7 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        // 可选：|a| 相对 g 的最大偏差比例，超出本帧只积分陀螺，默认 0.25，范围 [0, 10]
         if (const auto it = parameters.find("orientation.accel_tolerance"); it != parameters.end()) {
             if (const auto result = parse_real_parameter("orientation.accel_tolerance", it->second, 0.0, 10.0,
                                                          &options_.filter.accel_tolerance);
@@ -337,6 +345,7 @@ namespace mpu6500_ros2_control {
             }
         }
 
+        // 可选：启动阶段累计 |a|≈g 样本数，达此值置 orientation_valid=1，默认 25，范围 [1, 10000]
         if (const auto it = parameters.find("orientation.valid_samples"); it != parameters.end()) {
             if (const auto result = parse_integer_parameter("orientation.valid_samples", it->second, 1, 10000,
                                                             &options_.valid_samples);

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -182,6 +183,25 @@ namespace mpu6500_ros2_control {
 
             Mpu6500IioDevice device;
             EXPECT_FALSE(device.open(options));
+        }
+
+        TEST_F(IioDeviceTest, ResolvesStableSymlinkAlias) {
+            const std::filesystem::path link = fake_->path() + ".alias";
+            std::error_code error;
+            std::filesystem::remove(link, error);
+            std::filesystem::create_symlink(fake_->path(), link, error);
+            ASSERT_FALSE(error) << error.message();
+
+            IioDeviceOptions options;
+            options.device_path = link.string();
+
+            Mpu6500IioDevice device;
+            IioDeviceInfo info;
+            const auto result = device.open(options, &info);
+            EXPECT_TRUE(result) << result.error();
+            EXPECT_EQ(info.device_name, "mpu6500");
+
+            std::filesystem::remove(link, error);
         }
 
         TEST_F(IioDeviceTest, ClosesAndReopens) {

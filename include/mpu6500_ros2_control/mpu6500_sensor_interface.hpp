@@ -17,9 +17,9 @@ namespace mpu6500_ros2_control {
 
     /// @brief MPU6500 的 ros2_control SensorInterface 插件。
     ///
-    /// 一个实例对应一个 IIO 设备（一个 MPU6500），不包含“头部/躯干”语义。
+    /// 一个实例对应一个 IIO 设备（一个 MPU6500），不包含任何安装位置语义。
     /// 双 IMU 时在 URDF 中声明两个 type="sensor" 的 ros2_control 组件，例如
-    /// head_imu（默认 CS0）与 body_imu（默认 CS1）；是否启用由 URDF 决定。
+    /// imu0 与 imu1；具体名字、设备路径与轴映射完全由 URDF 决定。
     ///
     /// 导出的状态接口：
     /// - orientation.x/y/z/w
