@@ -1,32 +1,21 @@
 # mpu6500_ros2_control
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+基于 Linux IIO 子系统的 InvenSense **MPU6500** 六轴 IMU（三轴陀螺 + 三轴加速度计）`ros2_control` 传感器插件。
 
-`ros2_control` sensor interface for the InvenSense **MPU6500** 6-axis IMU
-(3-axis gyroscope + 3-axis accelerometer) through the Linux IIO subsystem.
+每个 IIO 设备对应一个 `hardware_interface::SensorInterface` 组件。驱动不包含头部/躯干语义，也不直接操作 SPI/I2C；它只读取内核驱动（`inv-mpu6000-spi`）导出的 IIO sysfs 属性。
 
-The package exports one `hardware_interface::SensorInterface` component per IIO
-device. It does not contain head/trunk semantics and does not open SPI/I2C
-directly; it reads the IIO sysfs attributes exposed by the kernel driver
-(`inv-mpu6000-spi`).
+## 特性
 
-## Features
+- 一个插件实例对应一个 `/dev/iio:deviceN`（或 IIO sysfs 目录）。
+- 10 个标准状态接口（姿态四元数、角速度、线加速度），外加可选的`orientation_valid` 健康标志。
+- 使用设备的 `scale` 属性把原始值换算为 SI 单位。
+- 支持安装矩阵：可配置车体轴到传感器轴的映射与符号取反。
+- 互补滤波四元数：加速度计约束 roll/pitch，陀螺积分 yaw。MPU6500 没有磁力计，yaw 会漂移。
+- 读取瞬时失败时沿用上一帧；持续失败后向 `ResourceManager` 返回`return_type::ERROR`。
+- 集成 `common_cpp` 日志后端（spdlog + ROS 桥接），同时支持 colcon、普通CMake 和顶层 CLion 聚合构建。
+- 支持 imu0 + imu1 两路 IMU。默认**同时启用**两路；每路可用 `enable_imu0` / `enable_imu1` 单独关闭。如何把 imu0/imu1 绑定到本体连杆（如 microduck_rev 的 `imu_trunk` / `imu_head`），见下文「把 imu0 / imu1 绑定到本体连杆」。
 
-- One plugin instance per `/dev/iio:deviceN` (or per IIO sysfs directory).
-- 10 standard state interfaces (quaternion orientation, angular velocity,
-  linear acceleration) plus an optional `orientation_valid` health flag.
-- Raw samples are converted to SI units using the device's `scale` attributes.
-- Configurable body-axis remapping and sign inversion for the mounting matrix.
-- Complementary quaternion filter: accelerometer constrains roll/pitch, gyro
-  integrates yaw. MPU6500 has no magnetometer, so yaw drifts.
-- Transient read failures keep the last sample; persistent failures report
-  `return_type::ERROR` to the `ResourceManager`.
-- `common_cpp` logging backend (`spdlog` + ROS bridge), compatible with colcon,
-  plain CMake and the workspace CLion aggregate build.
-- Optional second IMU (head + body). Default configuration enables **head only**
-  (SPI3 CS0); the body IMU is CS1 and is disabled by default.
-
-## Build
+## 构建
 
 ### colcon
 
@@ -37,8 +26,7 @@ colcon build --packages-select mpu6500_ros2_control \
 colcon test --packages-select mpu6500_ros2_control
 ```
 
-In the `microduck_rev` repository the workspace root itself contains a
-`CMakeLists.txt`, so prefix discovery with `--base-paths src`:
+若你的 ROS2 工作区根目录自身包含 `CMakeLists.txt`，需要使用`--base-paths src` 让 colcon 递归发现功能包：
 
 ```bash
 cd microduck_rev
@@ -47,13 +35,11 @@ colcon build --base-paths src --packages-select common_cpp mpu6500_ros2_control 
   --cmake-args -DCMAKE_CXX_COMPILER=g++-13
 ```
 
-`common_cpp` requires a C++23 standard library (GCC 13+), so build the whole
-workspace with GCC 13.
+`common_cpp` 需要支持 C++23 的标准库（GCC 13+），因此请使用 GCC 13 构建整个工作区。
 
-### Plain CMake / CLion
+### 普通 CMake / CLion
 
-`common_cpp` must be installed first (for example with
-`colcon build --packages-select common_cpp`). Then:
+先构建/安装 `common_cpp`（例如 `colcon build --packages-select common_cpp`），然后：
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -65,30 +51,23 @@ cmake --build build-mpu6500 -j
 ctest --test-dir build-mpu6500 --output-on-failure
 ```
 
-> Within a quoted CMake argument use `;` to separate prefixes, not `:`.
-> A colon is not a CMake list separator and `find_package(common_cpp)` will
-> fail even though the path exists.
+> 在带引号的 CMake 参数中请使用 `;` 分隔多个前缀，不要使用 `:`。
+> 冒号不是 CMake 列表分隔符，即使路径存在 `find_package(common_cpp)` 也会失败。
 
-For CLion, open the workspace root and select GCC 13 with the sourced ROS 2
-environment. The root `CMakeLists.txt` sets `ROS2_WS_SOURCE_BUILD=ON` and adds
-the packages listed in `colcon_add_subdirectories(...)`; this package then links
-the in-tree `common_cpp` targets. `mpu6500_ros2_control` is part of that list.
-Add `-DBUILD_TESTING=ON` to the CLion CMake options to build the tests.
+## ros2_control 配置
 
-## ros2_control configuration
-
-### Single IMU (default: head, CS0)
+### 单路 IMU（单个传感器，例如 imu0 CS0）
 
 ```xml
-<ros2_control name="head_imu" type="sensor">
+<ros2_control name="imu0" type="sensor">
   <hardware>
     <plugin>mpu6500_ros2_control/MPU6500SensorInterface</plugin>
-    <param name="iio_device">/dev/iio:device0</param>
+    <param name="iio_device">/dev/mpu6500-0</param>
     <param name="axis_map">x,y,z</param>
     <param name="log.log_level">info</param>
   </hardware>
 
-  <sensor name="head_imu">
+  <sensor name="imu0">
     <state_interface name="orientation.x"/>
     <state_interface name="orientation.y"/>
     <state_interface name="orientation.z"/>
@@ -99,214 +78,242 @@ Add `-DBUILD_TESTING=ON` to the CLion CMake options to build the tests.
     <state_interface name="linear_acceleration.x"/>
     <state_interface name="linear_acceleration.y"/>
     <state_interface name="linear_acceleration.z"/>
-    <!-- Optional: 1 when the attitude filter has converged and the sensor is healthy. -->
+    <!-- 可选：姿态滤波器已收敛且传感器健康时为 1。 -->
     <state_interface name="orientation_valid"/>
   </sensor>
 </ros2_control>
 ```
 
-Only interfaces declared here are exported. `imu_sensor_broadcaster` requires
-the standard 10 interfaces above; `orientation_valid` is optional and is not
-published by that broadcaster.
+只导出 URDF 中声明的接口。`imu_sensor_broadcaster` 需要上面 10 个标准接口；`orientation_valid` 是可选的，该广播器不会发布它。
+控制器可以只声明其中一部分（例如只声明 `angular_velocity.*` 和`linear_acceleration.*`）。
 
-### Two IMUs (head CS0 + body CS1)
+### 双路 IMU（imu0 CS0 + imu1 CS1）
 
-Add a second component. The plugin itself does not know which one is head or
-body; the URDF names and `iio_device` paths define that:
+再添加一个组件。插件本身不含头部/躯干语义：`iio_device` 决定读哪颗芯片，`<ros2_control>` / `<sensor>` 的 name 只决定状态接口前缀（如 `imu1/angular_velocity.x`），二者都**不**决定安装位置；传感器装在本体哪个部位由 URDF 中的 link/joint 以及广播器的 `frame_id` 决定（见下文「把 imu0 / imu1 绑定到本体连杆」）。
 
 ```xml
-<ros2_control name="body_imu" type="sensor">
+<ros2_control name="imu1" type="sensor">
   <hardware>
     <plugin>mpu6500_ros2_control/MPU6500SensorInterface</plugin>
-    <param name="iio_device">/dev/iio:device1</param>
+    <param name="iio_device">/dev/mpu6500-1</param>
     <param name="axis_map">x,y,z</param>
     <param name="log.log_level">info</param>
   </hardware>
-  <sensor name="body_imu">
-    <!-- same state interfaces, including orientation_valid if used -->
+  <sensor name="imu1">
+    <!-- 同样声明完整状态接口；需要时包含 orientation_valid -->
   </sensor>
 </ros2_control>
 ```
 
-> **Project wiring:** `head_imu` is on SPI3 **CS0**, `body_imu` on **CS1**.
-> The `/dev/iio:deviceN` numbering depends on kernel probe order, not on the CS
-> index. Verify with:
->
+> `iio_device`默认使用 udev 稳定别名 `/dev/mpu6500-0`、`/dev/mpu6500-1`，（见 udev/99-mpu6500-iio.rules）；未安装规则时可显式传 `/dev/iio:deviceN`。`/dev/iio:deviceN` 的编号由内核探测顺序决定，与 CS 编号无关。请先确认：
+> 
 > ```bash
-> for d in /sys/bus/iio/devices/iio:device*; do
->   echo "$d -> $(cat "$d/name")"
+>for d in /sys/bus/iio/devices/iio:device*; do
+> echo "$d -> $(cat "$d/name")"
 > done
-> ```
->
-> and pass the matching path to each component. The default setup enables only
-> the head IMU (CS0); add the `body_imu` component to the URDF to enable the
-> second one.
+>   ```
+> 
 
-### Xacro helper
+### Xacro 辅助宏
 
-`urdf/mpu6500_imu.urdf.xacro` provides `mpu6500_sensor` (one component) and
-`mpu6500_imu_pair` (head/body with enable flags):
+`urdf/mpu6500_ros2_control.urdf.xacro` 提供 `mpu6500_sensor`（单个组件）和`mpu6500_imu_pair`（imu0 + imu1，带使能开关）：
 
 ```xml
-<xacro:include filename="$(find mpu6500_ros2_control)/urdf/mpu6500_imu.urdf.xacro"/>
+<xacro:include filename="$(find mpu6500_ros2_control)/urdf/mpu6500_ros2_control.urdf.xacro"/>
 
-<!-- Default: head only (CS0); body disabled. -->
+<!-- 默认：imu0（CS0）与 imu1（CS1）两路都启用。 -->
 <xacro:mpu6500_imu_pair
-    enable_head="true"
-    enable_body="false"
-    head_iio_device="/dev/iio:device0"
-    body_iio_device="/dev/iio:device1"/>
+    enable_imu0="true"
+    enable_imu1="true"
+    imu0_iio_device="/dev/mpu6500-0"
+    imu1_iio_device="/dev/mpu6500-1"/>
 
-<!-- Enable both: -->
-<xacro:mpu6500_imu_pair enable_head="true" enable_body="true"/>
+<!-- 同时启用两路： -->
+<xacro:mpu6500_imu_pair enable_imu0="true" enable_imu1="true"/>
 ```
 
-## Parameters
+> `mpu6500_imu_pair` 只接受 `imu0_*` / `imu1_*` 参数，且只生成 `<ros2_control>` 硬件块，**不会创建 link，也不会把数据绑定到任何连杆**。要对应到本体的 `imu_trunk` / `imu_head`，需另外定义这两个 link/joint，并在 `imu_sensor_broadcaster` 里设置 `sensor_name` 与 `frame_id`（见下一节）。
 
-| Parameter | Default | Description |
+### 把 imu0 / imu1 绑定到本体连杆（如 imu_trunk / imu_head）
+
+ros2_control 的组件名（`<ros2_control name="imu0">` / `<sensor name="imu0">`）、URDF 的 link 名（`imu_trunk`）和 TF frame 是三个**互相独立**的名字，不会因为名字相同或不同就自动关联。真正把它们串起来的是 `imu_sensor_broadcaster` 的两个参数：
+
+- `sensor_name`：要读取哪个传感器（必须等于该传感器的 `<sensor name>`，本包宏里装配为 `imu0` / `imu1`）；
+- `frame_id`：发布的 `sensor_msgs/Imu.header.frame_id`，即这条数据属于哪个 TF 连杆（例如 `imu_trunk`）。
+
+所以「把 `imu_trunk` 和 `imu0` 绑定」的本质 = 让 imu0 的广播器用 `frame_id=imu_trunk` 发布。以 microduck_rev 为例（`imu_trunk` / `imu_head` 已在 `duck_description` 的 URDF 里定义为 link 并通过 fixed joint 连到 `base_link` / `head_yoll`）：
+
+```yaml
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+    imu_sensor_broadcaster_imu0:
+      type: imu_sensor_broadcaster/IMUSensorBroadcaster
+    imu_sensor_broadcaster_imu1:
+      type: imu_sensor_broadcaster/IMUSensorBroadcaster
+
+# imu0（SPI3 CS0，躯干）的数据在 imu_trunk 连杆坐标系下发布
+imu_sensor_broadcaster_imu0:
+  ros__parameters:
+    sensor_name: imu0
+    frame_id: imu_trunk
+
+# imu1（SPI3 CS1，头部）的数据在 imu_head 连杆坐标系下发布
+imu_sensor_broadcaster_imu1:
+  ros__parameters:
+    sensor_name: imu1
+    frame_id: imu_head
+```
+
+URDF 侧只要这两个 link 存在且接入 TF 树（`duck_description` 已满足），`frame_id` 就能在 TF 里解析到对应的位姿。注意本包自带示例的 `config/mpu6500_controllers.yaml` 用的是 `frame_id: imu0` / `imu1`（因为示例 URDF 里的 link 就叫 imu0/imu1）；下游整机若要发布到 `imu_trunk` / `imu_head`，请使用上面这种自己的控制器配置，或在启动时覆盖这两个参数。
+
+> 不需要、也不应该把 `<ros2_control>` 组件改名成 `imu_trunk`：改了名字就要同步改 `sensor_name`，而 link/物理含义本来就和组件名无关。保持组件名 `imu0`/`imu1` + 广播器 `frame_id` 映射到连杆，是最省事、最不容易错的做法。
+
+> 本仓库的 `duck_bringup` 就是按这种方式接入的：`src/duck_bringup/urdf/duck_with_mpu6500.urdf.xacro`（duck_description 本体 + mpu6500 传感器块整机装配）+ `src/duck_bringup/config/imu_controllers.yaml`（`frame_id: imu_trunk` / `imu_head`），由 `src/duck_bringup/launch/imu.launch.py` 启动。
+
+### 示例 launch（双路）与稳定 udev 别名
+
+`launch/mpu6500_dual_example.launch.py` 用 `config/mpu6500_controllers.yaml`启动 `robot_state_publisher`、`controller_manager` 和两路
+`imu_sensor_broadcaster`：
+
+```bash
+ros2 launch mpu6500_ros2_control mpu6500_dual_example.launch.py
+```
+
+默认使用 udev 稳定别名 `/dev/mpu6500-0` 与 `/dev/mpu6500-1`，安装一次即可：
+
+```bash
+sudo bash "$(ros2 pkg prefix mpu6500_ros2_control)/share/mpu6500_ros2_control/scripts/install_udev_rules.sh"
+```
+
+（或把 `udev/99-mpu6500-iio.rules` 拷到 `/etc/udev/rules.d/`）。别名按 SPI3 CS0=mpu6500-0、SPI3 CS1=mpu6500-1 固定，与 `iio:deviceN` 编号无关。可用 `imu0_iio_device:=...` /`imu1_iio_device:=...` 覆盖设备路径。
+
+> 实时内核说明：示例默认 `thread_priority:=50`。PREEMPT_RT 内核下需要实时权限，给运行用户在 `/etc/security/limits.d/` 配置 `rtprio` 与 `memlock`（或用具备`CAP_SYS_NICE` 的用户运行）；否则用 `thread_priority:=0` 关闭 SCHED_FIFO。
+> `scripts/install_rt_limits.sh <用户>` 可一次性写入这些限制（重新登录生效）。
+
+## 参数
+
+| 参数 | 默认值 | 说明 |
 |---|---|---|
-| `iio_device` | — | **Required.** `/dev/iio:deviceN`, `/sys/bus/iio/devices/iio:deviceN`, or a sysfs-like directory. |
-| `expected_name` | empty | Exact IIO device name. Empty accepts `mpu6500` or `mpu6050`. |
-| `verify_name` | `true` | Fail configuration when the device name is not accepted. `false` logs a warning instead. |
-| `axis_map` | `x,y,z` | Body axis → sensor axis mapping. Must be a permutation, e.g. `y,-x,z`. |
-| `gyro_scale` | `0` | rad/s per LSB. `0` reads `in_anglvel_<axis>_scale` (or `in_anglvel_scale`). |
-| `accel_scale` | `0` | m/s² per LSB. `0` reads `in_accel_<axis>_scale` (or `in_accel_scale`). |
-| `sampling_frequency_hz` | `0` | `0` leaves the device setting untouched. `>0` writes `sampling_frequency`. |
-| `strict_sampling_frequency` | `false` | Fail configuration if `sampling_frequency` cannot be written. |
-| `max_read_failures` | `3` | Consecutive read failures tolerated after a valid sample. `0` fails immediately. |
-| `orientation.accel_gain` | `0.05` | Complementary filter proportional gain (1/s). |
-| `orientation.integral_gain` | `0.0` | Gyro-bias integral gain (1/s²). `0` disables it. |
-| `orientation.accel_tolerance` | `0.25` | Maximum relative deviation of \|a\| from 1 g for accelerometer correction. |
-| `orientation.valid_samples` | `25` | Consecutive samples with acceleration magnitude ≈ 1 g required before `orientation_valid` becomes 1. At 50 Hz this is about 0.5 s. |
+| `iio_device` | — | **必填。** `/dev/iio:deviceN`、`/sys/bus/iio/devices/iio:deviceN` 或兼容的 sysfs 目录。 |
+| `expected_name` | 空 | 精确匹配 IIO 设备名。为空时接受 `mpu6500` 或 `mpu6050`。 |
+| `verify_name` | `true` | 设备名不匹配时配置失败。设为 `false` 时只打印警告。 |
+| `axis_map` | `x,y,z` | 车体轴 → 传感器轴映射，必须是 x/y/z 的排列，例如 `y,-x,z`。 |
+| `gyro_scale` | `0` | 每个 LSB 对应的 rad/s。`0` 表示读取 `in_anglvel_<axis>_scale`（或 `in_anglvel_scale`）。 |
+| `accel_scale` | `0` | 每个 LSB 对应的 m/s²。`0` 表示读取 `in_accel_<axis>_scale`（或 `in_accel_scale`）。 |
+| `sampling_frequency_hz` | `0` | `0` 不修改设备设置；`>0` 尝试写入 `sampling_frequency`。 |
+| `strict_sampling_frequency` | `false` | `sampling_frequency` 写入失败时是否判定为配置错误。 |
+| `max_read_failures` | `3` | 已有有效样本后，允许连续读取失败的次数；`0` 表示立即报错。 |
+| `orientation.accel_gain` | `0.05` | 互补滤波比例校正增益（1/s）。 |
+| `orientation.integral_gain` | `0.0` | 陀螺零偏积分增益（1/s²），`0` 关闭。 |
+| `orientation.accel_tolerance` | `0.25` | 加速度模长相对 1 g 的最大允许偏差比例，超出时本帧不做加速度校正。 |
+| `orientation.valid_samples` | `25` | 启动阶段需要连续多少个加速度模长≈1 g 的样本才把 `orientation_valid` 置 1；50 Hz 下约 0.5 s。 |
 
-### Logging parameters
+### 日志参数
 
-The package uses the process-global `common_cpp` logging backend. Supported
-hardware parameters:
+本包使用进程级的 `common_cpp` 日志后端，支持以下硬件参数：
 
-| Parameter | Default | Description |
+| 参数 | 默认值 | 说明 |
 |---|---|---|
-| `log.log_level` | `info` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off`. |
-| `log.log_path` | `./log` | Directory for `log_<name>_<timestamp>.log`. |
-| `log.async` | `true` | Asynchronous spdlog queue. |
-| `log.logger_name` | `mpu6500_ros2_control` | Logger name. |
-| `log.node_name` | `mpu6500_ros2_control` | Prefix shown in log lines. |
-| `log.filter.black` | empty | Comma-separated filter rules (`start-`, `end-`, `inc-`, `equal-`). |
+| `log.log_level` | `info` | `trace`、`debug`、`info`、`warn`、`error`、`critical`、`off`。 |
+| `log.log_path` | `./log` | 日志目录，文件名 `log_<name>_<timestamp>.log`。 |
+| `log.async` | `true` | 是否使用异步 spdlog 队列。 |
+| `log.logger_name` | `mpu6500_ros2_control` | logger 名称。 |
+| `log.node_name` | `mpu6500_ros2_control` | 日志行中的前缀。 |
+| `log.filter.black` | 空 | 逗号分隔的过滤规则（`start-`、`end-`、`inc-`、`equal-`）。 |
 
-> The logging backend is initialized once per process. When two IMU components
-> run in the same process, their `log.*` parameters must be identical; the
-> defaults already are. Different `log.logger_name`/`log.node_name` values
-> between components make the second initialization fail.
+> 日志后端在进程内只初始化一次。同一进程中的两个 IMU 组件必须使用完全相同的
+> `log.*` 参数（默认值已满足）；若给两个组件配置不同的
+> `log.logger_name`/`log.node_name`，第二个组件初始化会失败。
 
-## Exported state interfaces
+## 导出的状态接口
 
-| Interface | Unit | Source |
+| 接口 | 单位 | 来源 |
 |---|---|---|
-| `orientation.x/y/z/w` | — | Complementary filter, body → world quaternion. |
-| `angular_velocity.x/y/z` | rad/s | `in_anglvel_*_raw` × scale, body frame. |
-| `linear_acceleration.x/y/z` | m/s² | `in_accel_*_raw` × scale, body frame. |
-| `orientation_valid` | 0/1 | Optional health flag; see below. |
+| `orientation.x/y/z/w` | — | 互补滤波输出，车体 → world 四元数。 |
+| `angular_velocity.x/y/z` | rad/s | `in_anglvel_*_raw` × scale，车体系。 |
+| `linear_acceleration.x/y/z` | m/s² | `in_accel_*_raw` × scale，车体系。 |
+| `orientation_valid` | 0/1 | 可选健康标志，见下文。 |
 
-Coordinate convention follows ROS REP-103: x forward, y left, z up. An upright,
-stationary sensor reads `(0, 0, +g)` and exports the identity quaternion.
-`orientation` is produced from gravity and gyro only; yaw drifts and must not be
-used as a long-term heading reference.
+坐标约定遵循 ROS REP-103：x 向前、y 向左、z 向上。传感器静止直立时读数为`(0, 0, +g)`，导出单位四元数。`orientation` 只由重力和陀螺产生，yaw 会漂移，不能作为长期航向参考。
 
-### Orientation validity
+### 姿态有效标志
 
-`orientation_valid` is a **health/readiness flag**, not a per-sample freshness
-flag. It is exported only when declared in the URDF.
+`orientation_valid` 是**健康/就绪标志**，不是“本帧数据新鲜度”。只有 URDF 中声明该接口时才会导出。
 
-| Value | Meaning |
+| 值 | 含义 |
 |---|---|
-| `0` | Startup, cleanup/reset, or persistent read failure. The attitude is not trustworthy. |
-| `1` | The filter has been initialized and `orientation.valid_samples` consecutive samples with acceleration magnitude ≈ 1 g have been observed. |
+| `0` | 启动阶段、cleanup/reset 后，或持续读取失败。姿态不可信。 |
+| `1` | 滤波器已初始化，且连续观察到 `orientation.valid_samples` 个加速度模长≈1 g 的样本。 |
 
-Details:
+细节：
 
-- During startup, an acceleration sample is used for initialization only when its
-  magnitude is within `orientation.accel_tolerance` of 1 g. Lifting or moving the
-  robot at boot therefore cannot turn linear acceleration into "gravity".
-- After the flag becomes 1, later linear acceleration only skips that cycle's
-  accelerometer correction; it does not clear the flag. Otherwise walking would
-  constantly disable the controller's attitude-related logic.
-- Transient read failures within `max_read_failures` keep the last sample and do
-  not clear an already-raised flag. Exceeding the threshold returns `ERROR` and
-  clears it.
-- `on_cleanup`, `on_shutdown`, reconfigure and filter reset clear the flag.
-- **Yaw is not covered by this guarantee.** MPU6500 has no magnetometer; yaw is
-  relative and drifts even when `orientation_valid == 1`.
+- 启动阶段，只有加速度模长在 `orientation.accel_tolerance` 范围内接近 1 g 时，才允许用它初始化姿态。机器人上电时被抬起、放在斜面上或正在运动，都不会把线性加速度误当成重力。
+- 置 1 后，后续的线性加速度只会跳过当帧的加速度校正，不会清零；否则机器人一开始走路就会反复关闭控制器的姿态相关逻辑。
+- `max_read_failures` 以内的瞬时读取失败沿用上一帧，不清除已经置 1 的标志；超过阈值返回 `ERROR` 时才清零。
+- `on_cleanup`、`on_shutdown`、重新 configure 和滤波器 reset 都会清零。
+- **该保证不覆盖 yaw。** MPU6500 没有磁力计，即使 `orientation_valid == 1`，yaw 仍是相对量并且会漂移。
 
-`duck_control` should claim `body_imu/orientation_valid` and hold its current
-target / skip the policy and fall detection while it is 0. A controller-side
-warm-up counter is still useful as a fallback when the interface is absent.
+## 安装矩阵
 
-## Axis mounting
+`axis_map` 把**车体轴**映射到**传感器轴**，必须是 x/y/z 的排列；在轴前加 `-`表示取反。示例：
 
-`axis_map` maps **body axes** to **sensor axes** and must be a permutation of
-x/y/z; prefix a token with `-` to invert it. Examples:
-
-| Mounting | `axis_map` | Body x / y / z read from |
+| 安装方式 | `axis_map` | 车体 x / y / z 分别取 |
 |---|---|---|
-| Default | `x,y,z` | sensor x, y, z |
-| Rotated 90° about z | `y,-x,z` | sensor y, −sensor x, sensor z |
-| Upside down | `x,-y,-z` | sensor x, −sensor y, −sensor z |
+| 默认 | `x,y,z` | 传感器 x、y、z |
+| 绕 z 轴旋转 90° | `y,-x,z` | 传感器 y、−传感器 x、传感器 z |
+| 倒装 | `x,-y,-z` | 传感器 x、−传感器 y、−传感器 z |
 
-The same mapping is applied to gyro and acceleration.
+陀螺与加速度使用同一套映射。
 
-## Lifecycle and failures
+## 生命周期与失效行为
 
-- `on_init`: parses parameters, validates `<sensor>` and state interfaces. No
-  device access.
-- `on_configure`: resolves the IIO directory, verifies `name`, opens the six raw
-  attributes, caches `scale`, optionally writes `sampling_frequency`.
-- `read`: `pread()` on the cached file descriptors; converts units, applies the
-  axis map, updates the state interfaces and the filter.
-- `on_cleanup` / `on_shutdown`: closes all file descriptors.
-- First read failure (no previous sample): `ERROR`.
-- Transient failures: keeps the last sample and returns `OK` for up to
-  `max_read_failures` consecutive failures; the next failure returns `ERROR`.
-  A successful read resets the counter.
-- `orientation_valid`: starts at 0, becomes 1 only after the convergence
-  condition described above; persistent failure, cleanup/reconfigure and reset
-  clear it.
+- `on_init`：解析参数、校验 `<sensor>` 与状态接口，不访问设备。
+- `on_configure`：解析 IIO 目录、校验 `name`、打开 6 个 raw 属性、缓存`scale`，可选写入 `sampling_frequency`。
+- `read`：对已缓存的文件描述符执行 `pread()`，换算单位、应用轴映射、更新状态接口与滤波器。
+- `on_cleanup` / `on_shutdown`：关闭全部文件描述符。
+- 首次读取失败（还没有有效样本）：返回 `ERROR`。
+- 瞬时失败：沿用上一帧并返回 `OK`，最多允许 `max_read_failures` 次连续失败；下一次失败返回 `ERROR`。读取成功后计数清零。
+- `orientation_valid`：初始为 0，只有满足上面的收敛条件后才置 1；持续失败、cleanup/重新 configure 和 reset 都会清零。
 
-No command interfaces are exported; this is a read-only sensor component.
+本插件不导出命令接口，是只读传感器组件。
 
-## IIO requirements and current board status
+## IIO 要求与当前开发板状态
 
-Kernel support needed:
+需要的内核配置：
 
 ```text
 CONFIG_INV_MPU6050_IIO=y
 CONFIG_INV_MPU6050_SPI=y
 ```
 
-Required sysfs attributes per device:
+每个设备需要的 sysfs 属性：
 
 ```text
 /sys/bus/iio/devices/iio:deviceN/name
 /sys/bus/iio/devices/iio:deviceN/in_anglvel_{x,y,z}_raw
 /sys/bus/iio/devices/iio:deviceN/in_accel_{x,y,z}_raw
-/sys/bus/iio/devices/iio:deviceN/in_anglvel_scale   (or per-channel)
-/sys/bus/iio/devices/iio:deviceN/in_accel_scale     (or per-channel)
+/sys/bus/iio/devices/iio:deviceN/in_anglvel_scale   （或逐通道 scale）
+/sys/bus/iio/devices/iio:deviceN/in_accel_scale     （或逐通道 scale）
 ```
 
-As of 2026-11-03 the `lubancat` board has the driver and device-tree node but
-the SPI probe fails:
+截至 2026-11-22，已在 EmbedFire LubanCat-Zero（RK3566）上实测通过。设备树overlay 在 SPI3（M1 引脚，1 MHz）上挂载两颗 MPU6500：
 
 ```text
-inv-mpu6000-spi spi3.0: invalid whoami 0xff expected 0x70 (MPU6500)
+iio:device1 -> mpu6500   （SPI3 CS1，spi3.1）   imu1（microduck_rev: imu_head）
+iio:device2 -> mpu6500   （SPI3 CS0，spi3.0）   imu0（microduck_rev: imu_trunk）
 ```
 
-No `iio:deviceN` for the IMU exists yet. Fix power, SPI3 wiring/CS, and
-`spi-max-frequency` (try 1 MHz first) before using this package on hardware.
-Until then, the unit tests exercise the same code path through a fake IIO sysfs
-directory (`test/fake_mpu6500.hpp`).
+> 上表中的 `iio:device1/2` 只是某次实测的编号示例；重启或探测顺序变化后会变，请始终用 udev 别名 `/dev/mpu6500-0` / `/dev/mpu6500-1`，或先 `cat /sys/bus/iio/devices/iio:device*/name` 确认。
 
-## Testing with the fake MPU6500
+两路组件都能在 `controller_manager` 中初始化、配置并激活，以 50 Hz 运行，并通过`imu_sensor_broadcaster` 发布 `sensor_msgs/Imu`（实测 |a| ≈ 1 g、四元数收敛、`orientation_valid` 在 25 个样本后置 1）。若主机没有实时权限，启动`controller_manager` 时加上 `-p thread_priority:=0`，否则其 RT 线程在无法锁定
+内存 / 设置 `SCHED_FIFO` 时会异常中止。
 
-The tests create a temporary directory that looks like IIO sysfs:
+单元测试仍通过模拟 IIO sysfs 目录（`test/fake_mpu6500.hpp`）覆盖同一套代码路径。
+
+## 使用 fake MPU6500 测试
+
+测试会在临时目录中创建与 IIO sysfs 相同的结构：
 
 ```text
 fake_mpu6500_<pid>_<n>/
@@ -317,37 +324,27 @@ fake_mpu6500_<pid>_<n>/
 └─ in_accel_x_raw   ... in_accel_z_raw
 ```
 
-`FakeMpu6500::set_raw_gyro()` / `set_raw_accel()` rewrite the files, so the
-driver's already-open descriptors read the new values. Run:
+`FakeMpu6500::set_raw_gyro()` / `set_raw_accel()` 会改写这些文件，因此驱动已打开的文件描述符可以读到新值。运行：
 
 ```bash
 ctest --test-dir build-mpu6500 --output-on-failure
-# or
+# 或
 colcon test --packages-select mpu6500_ros2_control --event-handlers console_direct+
 ```
 
-Tests cover:
+测试覆盖：
 
-- scale conversion, axis map/sign, device-name checks, missing attributes,
-  corrupt values, `sampling_frequency` write/failure, close/reopen;
-- filter initialization, roll convergence, pure gyro integration, invalid `dt`;
-- `orientation_valid` startup convergence, rejection of non-1 g startup
-  samples, persistence during linear acceleration, and clearing on persistent
-  failure/cleanup;
-- `SensorInterface` lifecycle, interface export, transient failure handling,
-  cleanup/reconfigure, and two independent components (head + body);
-- pluginlib loading from the build tree.
+- scale 换算、轴映射/符号、设备名校验、缺失属性、损坏数据、`sampling_frequency` 写入与失败、关闭重开；
+- 滤波初始化、roll 收敛、纯陀螺积分、非法 `dt`；
+- `orientation_valid` 的启动收敛、非 1 g 启动样本拒绝、运动加速度下保持、持续失败/cleanup 清零；
+- `SensorInterface` 生命周期、接口导出、瞬时失败处理、清理后重配，以及两个独立组件（imu0 + imu1）同时读取；
+- 从构建树加载 pluginlib 插件。
 
-## Limitations
+## 限制
 
-- Reads six sysfs attributes per cycle instead of using an IIO buffer. At 50 Hz
-  this is negligible; for high-rate sampling use an IIO buffer/libiio backend.
-- The `scale` attributes are cached at configure time; changing the device range
-  at runtime requires a reconfigure.
-- `sampling_frequency` may not be writable on all kernels; by default a failure
-  is a warning, not an error.
-- IIO device numbering is not stable across boots/probe order; configure by path
-  after checking `name`. udev rules are recommended for production.
-- No magnetometer: yaw is not absolute and drifts.
-- One IIO device per plugin instance. Dual IMU is two components; do not average
-  the two sensors — they are different rigid bodies.
+- 每个周期读取 6 个 sysfs 属性，未使用 IIO buffer。50 Hz 下开销可忽略；高速采样应改用 IIO buffer/libiio 后端。
+- `scale` 在 configure 时缓存；运行期改变量程需要重新 configure。
+- 并非所有内核都允许写 `sampling_frequency`；默认写入失败只告警，不阻断启动。
+- IIO 设备编号在重启/探测顺序变化后不保证稳定；请确认 `name` 后按路径配置，生产环境建议加 udev 规则。
+- 没有磁力计，yaw 不是绝对航向，会漂移。
+- 一个插件实例只对应一个 IIO 设备。双 IMU 是两套组件；不要对两路数据做平均，它们测量的是不同刚体。
